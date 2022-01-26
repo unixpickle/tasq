@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"time"
@@ -20,7 +21,8 @@ func main() {
 		Queues: NewQueueState(timeout),
 	}
 	http.HandleFunc("/", s.ServeIndex)
-	http.HandleFunc("/task/push", s.ServeAddTask)
+	http.HandleFunc("/task/push", s.ServePushTask)
+	http.HandleFunc("/task/push_batch", s.ServePushBatch)
 	http.HandleFunc("/task/pop", s.ServePopTask)
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
 	http.ListenAndServe(addr, nil)
@@ -43,12 +45,29 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) ServeAddTask(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 	contents := r.FormValue("contents")
 	if contents == "" {
 		serveError(w, "must specify non-empty `contents` parameter")
 	} else {
 		serveObject(w, s.Queues.Push(contents))
+	}
+}
+
+func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	var contents []string
+	if err := json.Unmarshal(data, &contents); err != nil {
+		serveError(w, err.Error())
+	} else {
+		ids := []string{}
+		for _, c := range contents {
+			ids = append(ids, s.Queues.Push(c))
+		}
+		serveObject(w, ids)
 	}
 }
 
