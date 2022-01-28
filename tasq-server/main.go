@@ -25,6 +25,8 @@ func main() {
 	http.HandleFunc("/task/push_batch", s.ServePushBatch)
 	http.HandleFunc("/task/pop", s.ServePopTask)
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
+	http.HandleFunc("/task/clear", s.ServeClearTasks)
+	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
 	http.ListenAndServe(addr, nil)
 }
 
@@ -91,6 +93,17 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 	} else {
 		serveError(w, "there was no in-progress task with the specified `id`")
 	}
+}
+
+func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
+	s.Queues.Pending.Clear()
+	s.Queues.Running.Clear()
+	serveObject(w, true)
+}
+
+func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
+	s.Queues.Running.ExpireAll()
+	serveObject(w, true)
 }
 
 func serveObject(w http.ResponseWriter, obj interface{}) {

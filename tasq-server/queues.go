@@ -97,6 +97,13 @@ func (p *PendingQueue) Len() int {
 	return p.deque.Len()
 }
 
+// Clear deletes all of the pending tasks.
+func (p *PendingQueue) Clear() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.deque = &TaskDeque{}
+}
+
 type RunningQueue struct {
 	lock     sync.Mutex
 	idToTask map[string]*Task
@@ -164,4 +171,21 @@ func (r *RunningQueue) Len() int {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return r.deque.Len()
+}
+
+// ExpireAll changes the timeout for all tasks to be before now.
+func (r *RunningQueue) ExpireAll() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	for _, task := range r.idToTask {
+		task.expiration = time.Time{}
+	}
+}
+
+// Clear deletes all of the running tasks.
+func (r *RunningQueue) Clear() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.idToTask = map[string]*Task{}
+	r.deque = &TaskDeque{}
 }
