@@ -24,6 +24,7 @@ func main() {
 	http.HandleFunc("/task/push", s.ServePushTask)
 	http.HandleFunc("/task/push_batch", s.ServePushBatch)
 	http.HandleFunc("/task/pop", s.ServePopTask)
+	http.HandleFunc("/task/peek", s.ServePeekTask)
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
 	http.HandleFunc("/task/clear", s.ServeClearTasks)
 	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
@@ -80,7 +81,31 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if nextTry != nil {
 			timeout := (*nextTry).Sub(time.Now())
-			serveObject(w, map[string]interface{}{"done": false, "retry": math.Max(0, timeout.Seconds())})
+			serveObject(w, map[string]interface{}{
+				"done":  false,
+				"retry": math.Max(0, timeout.Seconds()),
+			})
+		} else {
+			serveObject(w, map[string]interface{}{"done": true})
+		}
+	}
+}
+
+func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
+	task, nextTask, nextTime := s.Queues.Peek()
+	if task != nil {
+		serveObject(w, map[string]interface{}{"contents": task.Contents, "id": task.ID})
+	} else {
+		if nextTask != nil {
+			timeout := (*nextTime).Sub(time.Now())
+			serveObject(w, map[string]interface{}{
+				"done":  false,
+				"retry": math.Max(0, timeout.Seconds()),
+				"next": map[string]interface{}{
+					"contents": nextTask.Contents,
+					"id":       nextTask.ID,
+				},
+			})
 		} else {
 			serveObject(w, map[string]interface{}{"done": true})
 		}

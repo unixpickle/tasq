@@ -9,4 +9,5 @@ Tasks are pushed to the queue via an HTTP endpoint, and popped using another end
  * `/task/pop` - pop a task from the queue. If no tasks are available, this may indicate a timeout after which the longest-running task would timeout.
    * On normal response, will return something like `{"data": {"id": "...", "contents": "..."}}`.
    * If queue is empty, will return something like `{"data": {"done": false, "retry": 3.14}}`, where `retry` is the number of seconds after which to try popping again, and `done` is `true` if no tasks are pending or running.
+ * `/task/peek` - look at the next task that would be returned by `/task/pop`. When the queue is empty but tasks are still in progress (but not timed out), this returns extra information. In addition to `done` and `retry` fields, this will return a `next` field containing a dictionary with `id` and `contents` of the next task that will expire. This can make it easier for a human to see which tasks are repeatedly failing or timing out.
  * `/task/completed` - indicate that the task is completed. Simply provide a `?id=X` query argument.

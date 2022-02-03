@@ -13,6 +13,10 @@ type Task struct {
 	queueNext *Task
 }
 
+func (t *Task) DisconnectedCopy() *Task {
+	return &Task{ID: t.ID, Contents: t.Contents}
+}
+
 type TaskDeque struct {
 	first *Task
 	last  *Task

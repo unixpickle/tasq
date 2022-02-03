@@ -35,6 +35,14 @@ func (q *QueueState) Pop() (*Task, *time.Time) {
 	return nil, nextTry
 }
 
+func (q *QueueState) Peek() (*Task, *Task, *time.Time) {
+	nextPending := q.Pending.PeekTask()
+	if nextPending != nil {
+		return nextPending, nil, nil
+	}
+	return q.Running.PeekExpired()
+}
+
 func (q *QueueState) Completed(id string) bool {
 	res := q.Running.Completed(id) != nil
 	if res {
@@ -88,6 +96,20 @@ func (p *PendingQueue) PopTask() *Task {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	return p.deque.PopFirst()
+}
+
+// PeekTask gets a copy of the next task.
+//
+// The copy only includes visible metadata. It will have no connection to the
+// queue or the original task.
+func (p *PendingQueue) PeekTask() *Task {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	t := p.deque.PeekFirst()
+	if t == nil {
+		return nil
+	}
+	return t.DisconnectedCopy()
 }
 
 // Len gets the number of queued tasks.
@@ -147,6 +169,32 @@ func (r *RunningQueue) PopExpired() (*Task, *time.Time) {
 		r.deque.Remove(task)
 		delete(r.idToTask, task.ID)
 		return task, nil
+	}
+}
+
+// PeekExpired returns a copy of the first timed out task or the next task that
+// will expire in the queue.
+//
+// If no tasks are timed out, the second return value is the next task to
+// expire, and the third is the time when it will expire.
+//
+// If no tasks are enqueued (expired or not) all return values are nil.
+//
+// The returned tasks only include visible metadata. They will have no
+// connection to the queue or the original task.
+func (r *RunningQueue) PeekExpired() (*Task, *Task, *time.Time) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	task := r.deque.PeekFirst()
+	if task == nil {
+		return nil, nil, nil
+	}
+	now := time.Now()
+	if task.expiration.After(now) {
+		exp := task.expiration
+		return nil, task.DisconnectedCopy(), &exp
+	} else {
+		return task.DisconnectedCopy(), nil, nil
 	}
 }
 
