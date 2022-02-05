@@ -21,6 +21,7 @@ func main() {
 		Queues: NewQueueState(timeout),
 	}
 	http.HandleFunc("/", s.ServeIndex)
+	http.HandleFunc("/counts", s.ServeCounts)
 	http.HandleFunc("/task/push", s.ServePushTask)
 	http.HandleFunc("/task/push_batch", s.ServePushBatch)
 	http.HandleFunc("/task/pop", s.ServePopTask)
@@ -28,6 +29,7 @@ func main() {
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
 	http.HandleFunc("/task/clear", s.ServeClearTasks)
 	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
+	http.HandleFunc("/task/queue_expired", s.ServeQueueExpired)
 	http.ListenAndServe(addr, nil)
 }
 
@@ -38,14 +40,20 @@ type Server struct {
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" || r.URL.Path == "" {
 		w.Header().Set("content-type", "text/plain")
-		fmt.Fprintf(w, "Pending tasks: %d\n", s.Queues.Pending.Len())
-		fmt.Fprintf(w, "In-progress tasks: %d\n", s.Queues.Running.Len())
-		fmt.Fprintf(w, "Completed tasks: %d\n", s.Queues.NumCompleted())
+		pending, running, completed := s.Queues.Counts()
+		fmt.Fprintf(w, "Pending tasks: %d\n", pending)
+		fmt.Fprintf(w, "In-progress tasks: %d\n", running)
+		fmt.Fprintf(w, "Completed tasks: %d\n", completed)
 	} else {
 		w.Header().Set("content-type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprintln(w, "<html><body>Page not found</body></html>")
 	}
+}
+
+func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
+	pending, running, completed := s.Queues.Counts()
+	serveObject(w, map[string]int64{"pending": pending, "running": running, "completed": completed})
 }
 
 func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
@@ -121,14 +129,18 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
-	s.Queues.Pending.Clear()
-	s.Queues.Running.Clear()
+	s.Queues.Clear()
 	serveObject(w, true)
 }
 
 func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
-	s.Queues.Running.ExpireAll()
-	serveObject(w, true)
+	n := s.Queues.ExpireAll()
+	serveObject(w, n)
+}
+
+func (s *Server) ServeQueueExpired(w http.ResponseWriter, r *http.Request) {
+	n := s.Queues.QueueExpired()
+	serveObject(w, n)
 }
 
 func serveObject(w http.ResponseWriter, obj interface{}) {

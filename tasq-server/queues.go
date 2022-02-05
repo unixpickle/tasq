@@ -8,27 +8,39 @@ import (
 
 // QueueState wraps the pending and running queues in a single object.
 type QueueState struct {
-	Pending *PendingQueue
-	Running *RunningQueue
+	lock    sync.RWMutex
+	pending *PendingQueue
+	running *RunningQueue
 
-	completionLock    sync.RWMutex
 	completionCounter int64
 }
 
+// NewQueueState creates empty queues with the given task timeout.
+func NewQueueState(timeout time.Duration) *QueueState {
+	return &QueueState{
+		pending: NewPendingQueue(),
+		running: NewRunningQueue(timeout),
+	}
+}
+
 func (q *QueueState) Push(contents string) string {
-	return q.Pending.AddTask(contents).ID
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return q.pending.AddTask(contents).ID
 }
 
 func (q *QueueState) Pop() (*Task, *time.Time) {
-	nextPending := q.Pending.PopTask()
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	nextPending := q.pending.PopTask()
 	if nextPending != nil {
-		q.Running.StartedTask(nextPending)
+		q.running.StartedTask(nextPending)
 		return nextPending, nil
 	}
 
-	nextExpired, nextTry := q.Running.PopExpired()
+	nextExpired, nextTry := q.running.PopExpired()
 	if nextExpired != nil {
-		q.Running.StartedTask(nextExpired)
+		q.running.StartedTask(nextExpired)
 		return nextExpired, nil
 	}
 
@@ -36,39 +48,60 @@ func (q *QueueState) Pop() (*Task, *time.Time) {
 }
 
 func (q *QueueState) Peek() (*Task, *Task, *time.Time) {
-	nextPending := q.Pending.PeekTask()
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	nextPending := q.pending.PeekTask()
 	if nextPending != nil {
 		return nextPending, nil, nil
 	}
-	return q.Running.PeekExpired()
+	return q.running.PeekExpired()
 }
 
 func (q *QueueState) Completed(id string) bool {
-	res := q.Running.Completed(id) != nil
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	res := q.running.Completed(id) != nil
 	if res {
-		q.completionLock.Lock()
 		q.completionCounter += 1
-		q.completionLock.Unlock()
 	}
 	return res
 }
 
-func (q *QueueState) NumCompleted() int64 {
-	q.completionLock.RLock()
-	defer q.completionLock.RUnlock()
-	return q.completionCounter
+func (q *QueueState) Counts() (pending, running, completed int64) {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	return int64(q.pending.Len()), int64(q.running.Len()), q.completionCounter
 }
 
-// NewQueueState creates empty queues with the given task timeout.
-func NewQueueState(timeout time.Duration) *QueueState {
-	return &QueueState{
-		Pending: NewPendingQueue(),
-		Running: NewRunningQueue(timeout),
+func (q *QueueState) Clear() {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	q.pending.Clear()
+	q.running.Clear()
+}
+
+func (q *QueueState) ExpireAll() int {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return q.running.ExpireAll()
+}
+
+func (q *QueueState) QueueExpired() int {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	n := 0
+	for {
+		task, _ := q.running.PopExpired()
+		if task == nil {
+			break
+		}
+		n += 1
+		q.pending.PushTask(task)
 	}
+	return n
 }
 
 type PendingQueue struct {
-	lock  sync.Mutex
 	deque *TaskDeque
 	curID int64
 }
@@ -79,9 +112,6 @@ func NewPendingQueue() *PendingQueue {
 
 // AddTask creates a new task with the given contents and enqueues it.
 func (p *PendingQueue) AddTask(contents string) *Task {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
 	task := &Task{
 		Contents: contents,
 		ID:       strconv.FormatInt(p.curID, 16),
@@ -91,10 +121,13 @@ func (p *PendingQueue) AddTask(contents string) *Task {
 	return task
 }
 
+// PushTask re-enqueues an existing task.
+func (p *PendingQueue) PushTask(t *Task) {
+	p.deque.PushLast(t)
+}
+
 // PopTask gets the next task (in FIFO order).
 func (p *PendingQueue) PopTask() *Task {
-	p.lock.Lock()
-	defer p.lock.Unlock()
 	return p.deque.PopFirst()
 }
 
@@ -103,8 +136,6 @@ func (p *PendingQueue) PopTask() *Task {
 // The copy only includes visible metadata. It will have no connection to the
 // queue or the original task.
 func (p *PendingQueue) PeekTask() *Task {
-	p.lock.Lock()
-	defer p.lock.Unlock()
 	t := p.deque.PeekFirst()
 	if t == nil {
 		return nil
@@ -114,20 +145,15 @@ func (p *PendingQueue) PeekTask() *Task {
 
 // Len gets the number of queued tasks.
 func (p *PendingQueue) Len() int {
-	p.lock.Lock()
-	defer p.lock.Unlock()
 	return p.deque.Len()
 }
 
 // Clear deletes all of the pending tasks.
 func (p *PendingQueue) Clear() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
 	p.deque = &TaskDeque{}
 }
 
 type RunningQueue struct {
-	lock     sync.Mutex
 	idToTask map[string]*Task
 	deque    *TaskDeque
 	timeout  time.Duration
@@ -143,8 +169,6 @@ func NewRunningQueue(timeout time.Duration) *RunningQueue {
 
 // StartedTask adds the task to the queue and sets its timeout accordingly.
 func (r *RunningQueue) StartedTask(t *Task) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	r.idToTask[t.ID] = t
 	r.deque.PushLast(t)
 	t.expiration = time.Now().Add(r.timeout)
@@ -155,8 +179,6 @@ func (r *RunningQueue) StartedTask(t *Task) {
 // If no tasks are timed out, the second return argument specifies the next
 // time when a task is set to expire (if there is one).
 func (r *RunningQueue) PopExpired() (*Task, *time.Time) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	task := r.deque.PeekFirst()
 	if task == nil {
 		return nil, nil
@@ -183,8 +205,6 @@ func (r *RunningQueue) PopExpired() (*Task, *time.Time) {
 // The returned tasks only include visible metadata. They will have no
 // connection to the queue or the original task.
 func (r *RunningQueue) PeekExpired() (*Task, *Task, *time.Time) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	task := r.deque.PeekFirst()
 	if task == nil {
 		return nil, nil, nil
@@ -203,8 +223,6 @@ func (r *RunningQueue) PeekExpired() (*Task, *Task, *time.Time) {
 // If the task is no longer in the queue, for example if it was removed with
 // PopExpired(), this returns nil.
 func (r *RunningQueue) Completed(id string) *Task {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	task, ok := r.idToTask[id]
 	if !ok {
 		return nil
@@ -216,24 +234,21 @@ func (r *RunningQueue) Completed(id string) *Task {
 
 // Len gets the number of tasks in the queue.
 func (r *RunningQueue) Len() int {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	return r.deque.Len()
 }
 
 // ExpireAll changes the timeout for all tasks to be before now.
-func (r *RunningQueue) ExpireAll() {
-	r.lock.Lock()
-	defer r.lock.Unlock()
+func (r *RunningQueue) ExpireAll() int {
+	n := 0
 	for _, task := range r.idToTask {
+		n += 1
 		task.expiration = time.Time{}
 	}
+	return n
 }
 
 // Clear deletes all of the running tasks.
 func (r *RunningQueue) Clear() {
-	r.lock.Lock()
-	defer r.lock.Unlock()
 	r.idToTask = map[string]*Task{}
 	r.deque = &TaskDeque{}
 }
