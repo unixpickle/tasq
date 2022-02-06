@@ -6,7 +6,17 @@ import (
 	"time"
 )
 
-// QueueState wraps the pending and running queues in a single object.
+// QueueState maintains two queues of tasks: a pending queue and a running
+// queue.
+//
+// Tasks are added to the pending queue via Push(). When a task is returned
+// from Pop(), it is moved to the running queue and given an expiration time.
+// In general, Pop() first checks for tasks in the pending queue, and only
+// attempts to re-use an expired task from the running queue if necessary.
+// When Completed() is called for a task, it is removed from the running queue,
+// preventing it from ever being returned by Pop() again.
+// Tasks may be marked as completed at any time while they are in the running
+// queue, even if they are expired.
 type QueueState struct {
 	lock    sync.RWMutex
 	pending *PendingQueue
@@ -23,12 +33,15 @@ func NewQueueState(timeout time.Duration) *QueueState {
 	}
 }
 
+// Push creates a task and returns the its new ID.
 func (q *QueueState) Push(contents string) string {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	return q.pending.AddTask(contents).ID
 }
 
+// Pop gets a task from the queue, preferring the pending queue and dipping
+// into the expired tasks in the running queue only if necessary.
 func (q *QueueState) Pop() (*Task, *time.Time) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -47,6 +60,44 @@ func (q *QueueState) Pop() (*Task, *time.Time) {
 	return nil, nextTry
 }
 
+// PopBatch atomically pops at most n tasks from the queue.
+//
+// If fewer than n tasks are returned, the second return value is the time that
+// the next running task will expire, or nil if no tasks were running before
+// PopBatch was called.
+func (q *QueueState) PopBatch(n int) ([]*Task, *time.Time) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	var tasks []*Task
+	for len(tasks) < n {
+		t := q.pending.PopTask()
+		if t == nil {
+			break
+		}
+		tasks = append(tasks, t)
+	}
+	var nextTry *time.Time
+	for len(tasks) < n {
+		var t *Task
+		t, nextTry = q.running.PopExpired()
+		if t == nil {
+			break
+		}
+		tasks = append(tasks, t)
+	}
+
+	for _, t := range tasks {
+		q.running.StartedTask(t)
+	}
+
+	return tasks, nextTry
+}
+
+// Peek gets the next available task to pop, if there is one.
+//
+// If no task is currently available, Peek returns the next task to expire and
+// the time when it will expire, or nil if no tasks are running.
 func (q *QueueState) Peek() (*Task, *Task, *time.Time) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -57,6 +108,8 @@ func (q *QueueState) Peek() (*Task, *Task, *time.Time) {
 	return q.running.PeekExpired()
 }
 
+// Completed marks the identified task as complete, or returns false if no task
+// with the given ID was in the running queue.
 func (q *QueueState) Completed(id string) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -67,25 +120,35 @@ func (q *QueueState) Completed(id string) bool {
 	return res
 }
 
+// Counts gets the current number of tasks in each state.
 func (q *QueueState) Counts() (pending, running, completed int64) {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	return int64(q.pending.Len()), int64(q.running.Len()), q.completionCounter
 }
 
+// Clear empties the queues and resets the completion counter.
 func (q *QueueState) Clear() {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	q.pending.Clear()
 	q.running.Clear()
+	q.completionCounter = 0
 }
 
+// ExpireAll marks all tasks as expired, allowing them to be immediately popped
+// from the running queue.
+//
+// It does not move the tasks back to the pending queue. For this, call
+// QueueExpired().
 func (q *QueueState) ExpireAll() int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	return q.running.ExpireAll()
 }
 
+// QueueExpired puts expired tasks from the running queue back into the pending
+// queue.
 func (q *QueueState) QueueExpired() int {
 	q.lock.Lock()
 	defer q.lock.Unlock()

@@ -3,8 +3,8 @@ package main
 import "time"
 
 type Task struct {
-	ID       string
-	Contents string
+	ID       string `json:"id"`
+	Contents string `json:"contents"`
 
 	// For in-progress tasks.
 	expiration time.Time

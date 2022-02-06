@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,8 +27,10 @@ func main() {
 	http.HandleFunc("/task/push", s.ServePushTask)
 	http.HandleFunc("/task/push_batch", s.ServePushBatch)
 	http.HandleFunc("/task/pop", s.ServePopTask)
+	http.HandleFunc("/task/pop_batch", s.ServePopBatch)
 	http.HandleFunc("/task/peek", s.ServePeekTask)
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
+	http.HandleFunc("/task/completed_batch", s.ServeCompletedBatch)
 	http.HandleFunc("/task/clear", s.ServeClearTasks)
 	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
 	http.HandleFunc("/task/queue_expired", s.ServeQueueExpired)
@@ -85,7 +89,7 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	task, nextTry := s.Queues.Pop()
 	if task != nil {
-		serveObject(w, map[string]interface{}{"contents": task.Contents, "id": task.ID})
+		serveObject(w, task)
 	} else {
 		if nextTry != nil {
 			timeout := (*nextTry).Sub(time.Now())
@@ -97,6 +101,34 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 			serveObject(w, map[string]interface{}{"done": true})
 		}
 	}
+}
+
+func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.FormValue("count"))
+	if err != nil {
+		serveError(w, "invalid 'count' parameter: "+err.Error())
+		return
+	} else if n <= 0 {
+		serveError(w, "invalid 'count' requested")
+		return
+	}
+
+	tasks, nextTry := s.Queues.PopBatch(n)
+
+	result := map[string]interface{}{
+		"done": len(tasks) == 0 && nextTry == nil,
+	}
+	if nextTry != nil {
+		timeout := (*nextTry).Sub(time.Now())
+		result["retry"] = math.Max(0, timeout.Seconds())
+	}
+	if tasks == nil {
+		// Prevent a null value in the JSON field.
+		tasks = []*Task{}
+	}
+	result["tasks"] = tasks
+
+	serveObject(w, result)
 }
 
 func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +157,30 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 		serveObject(w, true)
 	} else {
 		serveError(w, "there was no in-progress task with the specified `id`")
+	}
+}
+
+func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		serveError(w, err.Error())
+	} else {
+		var failures []string
+		for _, id := range ids {
+			if !s.Queues.Completed(id) {
+				failures = append(failures, id)
+			}
+		}
+		if len(failures) > 0 {
+			serveError(w, "there were no in-progress tasks with the specified ids: "+
+				strings.Join(failures, ", "))
+		} else {
+			serveObject(w, true)
+		}
 	}
 }
 
