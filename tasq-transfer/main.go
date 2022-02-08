@@ -1,18 +1,22 @@
 // Command tasq-transfer moves tasks from one tasq server to another.
+//
+// Regardless of program interruption or network errors, no tasks will be lost.
+// In particular, a crash or network failure during the transfer may result in
+// some tasks being duplicated between the source and destination servers, but
+// no tasks will be removed from the source before being added to the
+// destination.
 package main
 
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"sync"
+	"strconv"
+	"time"
 
 	"github.com/unixpickle/essentials"
 )
@@ -22,98 +26,114 @@ func main() {
 	var destHost string
 	var numTasks int
 	var bufferSize int
-	var workers int
-	flag.StringVar(&sourceHost, "source", "", "source host")
-	flag.StringVar(&destHost, "dest", "", "source host")
-	flag.IntVar(&numTasks, "num-tasks", -1, "rough number of tasks to transfer")
-	flag.IntVar(&bufferSize, "buffer-size", 1024, "task buffer size")
-	flag.IntVar(&workers, "workers", 32, "parallel Goroutines for popping tasks")
+	var waitRunning bool
+	flag.StringVar(&sourceHost, "source", "", "source server URL")
+	flag.StringVar(&destHost, "dest", "", "destination server URL")
+	flag.IntVar(&numTasks, "count", -1, "number of tasks to transfer")
+	flag.IntVar(&bufferSize, "buffer-size", 4096, "task buffer size")
+	flag.BoolVar(&waitRunning, "wait-running", false,
+		"attempt to transfer in-progress tasks once they expire")
 	flag.Parse()
 
 	if sourceHost == "" || destHost == "" {
-		fmt.Fprintln(os.Stderr, "Must provide -source and -dest. See -help.")
+		essentials.Die("Must provide -source and -dest. See -help.")
 	}
 
-	ch := &TaskChan{
-		Max:  int64(numTasks),
-		Chan: make(chan *SourceTask, bufferSize),
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ch.KeepGoing() {
-				task, err := PopTask(sourceHost)
-				if err != nil {
-					log.Println("ERROR:", err)
-					return
-				} else if task != nil {
-					return
-				}
-				ch.Chan <- task
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(ch.Chan)
-	}()
-
-	var buffer []*SourceTask
-	for task := range ch.Chan {
-		buffer = append(buffer, task)
-		if len(buffer) == bufferSize {
-			essentials.Must(PushTasks(destHost, buffer))
-			essentials.Must(CancelTasks(sourceHost, buffer, workers))
-			buffer = nil
+	completed := 0
+	for numTasks == -1 || completed < numTasks {
+		bs := bufferSize
+		if numTasks != -1 && bs > numTasks-completed {
+			bs = numTasks - completed
 		}
-	}
-
-	if len(buffer) > 0 {
-		essentials.Must(PushTasks(destHost, buffer))
-		essentials.Must(CancelTasks(sourceHost, buffer, workers))
+		response, err := PopBatch(sourceHost, bs)
+		if err != nil {
+			log.Fatalln("ERROR popping batch:", err)
+		}
+		if response.Done {
+			log.Println("Source queue has been exhausted.")
+			break
+		} else if len(response.Tasks) == 0 {
+			if waitRunning {
+				log.Printf("Waiting %f seconds for next timeout...", response.Retry)
+				time.Sleep(time.Duration(float64(time.Second) * response.Retry))
+			} else {
+				log.Printf("Done all immediately available tasks (wait time %f).", response.Retry)
+				break
+			}
+		} else {
+			if err := PushBatch(destHost, response.Tasks); err != nil {
+				log.Fatalln("ERROR pushing batch:", err)
+			}
+			if err := CompletedBatch(sourceHost, response.Tasks); err != nil {
+				log.Fatalln("ERROR marking batch as completed:", err)
+			}
+			completed += len(response.Tasks)
+			log.Printf("Current status: transferred a total of %d tasks", completed)
+		}
 	}
 }
 
-func PopTask(host string) (*SourceTask, error) {
-	reqURL := host + "/task/pop"
+type Task struct {
+	ID       string `json:"id"`
+	Contents string `json:"contents"`
+}
+
+type PopResponse struct {
+	Tasks []*Task `json:"tasks"`
+	Done  bool    `json:"done"`
+	Retry float64 `json:"retry"`
+}
+
+func PopBatch(host string, n int) (*PopResponse, error) {
+	reqURL, err := urlForAPI(host, "/task/pop_batch", map[string]string{"count": strconv.Itoa(n)})
+	if err != nil {
+		return nil, err
+	}
 	resp, err := http.Get(reqURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	var response struct {
-		Data *struct {
-			ID       *string `json:"id"`
-			Contents string  `json:"contents"`
-			Done     bool    `json:"done"`
-		} `json:"data"`
-		Error *string `json:"error"`
+		Data *PopResponse `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	if response.Error != nil {
-		return nil, errors.New(*response.Error)
-	}
-	if response.Data == nil {
-		return nil, errors.New("unexpected response data")
-	}
-	if response.Data.ID == nil {
-		return nil, nil
-	}
-	return &SourceTask{Contents: response.Data.Contents, ID: *response.Data.ID}, nil
+	return response.Data, nil
 }
 
-func PushTasks(host string, buffer []*SourceTask) error {
-	var allContents []string
-	for _, task := range buffer {
-		allContents = append(allContents, task.Contents)
+func PushBatch(host string, tasks []*Task) error {
+	reqURL, err := urlForAPI(host, "/task/push_batch", nil)
+	if err != nil {
+		return err
 	}
-	postData, _ := json.Marshal(allContents)
-	req, err := http.NewRequest("POST", host+"/task/push_batch", bytes.NewReader(postData))
+	var contents []string
+	for _, t := range tasks {
+		contents = append(contents, t.Contents)
+	}
+	return postStrings(reqURL, contents)
+}
+
+func CompletedBatch(host string, tasks []*Task) error {
+	reqURL, err := urlForAPI(host, "/task/completed_batch", nil)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for _, t := range tasks {
+		ids = append(ids, t.ID)
+	}
+	return postStrings(reqURL, ids)
+}
+
+func postStrings(reqURL string, strs []string) error {
+	data, _ := json.Marshal(strs)
+	req, err := http.NewRequest("POST", reqURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -125,21 +145,20 @@ func PushTasks(host string, buffer []*SourceTask) error {
 	return nil
 }
 
-func CancelTasks(host string, buffer []*SourceTask, workers int) error {
-	var firstErr error
-	var errLock sync.Mutex
-	essentials.ConcurrentMap(workers, len(buffer), func(i int) {
-		url := host + "/task/completed?id=" + url.QueryEscape(buffer[i].ID)
-		resp, err := http.Get(url)
-		if err != nil {
-			errLock.Lock()
-			if firstErr == nil {
-				firstErr = err
-			}
-			errLock.Unlock()
-		} else {
-			resp.Body.Close()
+func urlForAPI(baseURL, path string, query map[string]string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.Path = path
+	if query != nil {
+		values := url.Values{}
+		for k, v := range query {
+			values.Set(k, v)
 		}
-	})
-	return firstErr
+		parsed.RawQuery = values.Encode()
+	} else {
+		parsed.RawQuery = ""
+	}
+	return parsed.String(), nil
 }
