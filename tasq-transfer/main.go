@@ -8,17 +8,13 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/unixpickle/essentials"
+	"github.com/unixpickle/tasq"
 )
 
 func main() {
@@ -39,126 +35,49 @@ func main() {
 		essentials.Die("Must provide -source and -dest. See -help.")
 	}
 
+	sourceURL, err := url.Parse(sourceHost)
+	essentials.Must(err)
+	destURL, err := url.Parse(destHost)
+	essentials.Must(err)
+
+	sourceClient := &tasq.Client{URL: sourceURL}
+	destClient := &tasq.Client{URL: destURL}
+
 	completed := 0
 	for numTasks == -1 || completed < numTasks {
 		bs := bufferSize
 		if numTasks != -1 && bs > numTasks-completed {
 			bs = numTasks - completed
 		}
-		response, err := PopBatch(sourceHost, bs)
+		tasks, retry, err := sourceClient.PopBatch(bs)
 		if err != nil {
 			log.Fatalln("ERROR popping batch:", err)
 		}
-		if response.Done {
+		if len(tasks) == 0 && retry == nil {
 			log.Println("Source queue has been exhausted.")
 			break
-		} else if len(response.Tasks) == 0 {
+		} else if len(tasks) == 0 {
 			if waitRunning {
-				log.Printf("Waiting %f seconds for next timeout...", response.Retry)
-				time.Sleep(time.Duration(float64(time.Second) * response.Retry))
+				log.Printf("Waiting %f seconds for next timeout...", *retry)
+				time.Sleep(time.Duration(float64(time.Second) * *retry))
 			} else {
-				log.Printf("Done all immediately available tasks (wait time %f).", response.Retry)
+				log.Printf("Done all immediately available tasks (wait time %f).", *retry)
 				break
 			}
 		} else {
-			if err := PushBatch(destHost, response.Tasks); err != nil {
+			var ids, contents []string
+			for _, t := range tasks {
+				ids = append(ids, t.ID)
+				contents = append(contents, t.Contents)
+			}
+			if _, err := destClient.PushBatch(contents); err != nil {
 				log.Fatalln("ERROR pushing batch:", err)
 			}
-			if err := CompletedBatch(sourceHost, response.Tasks); err != nil {
+			if err := sourceClient.CompletedBatch(ids); err != nil {
 				log.Fatalln("ERROR marking batch as completed:", err)
 			}
-			completed += len(response.Tasks)
+			completed += len(tasks)
 			log.Printf("Current status: transferred a total of %d tasks", completed)
 		}
 	}
-}
-
-type Task struct {
-	ID       string `json:"id"`
-	Contents string `json:"contents"`
-}
-
-type PopResponse struct {
-	Tasks []*Task `json:"tasks"`
-	Done  bool    `json:"done"`
-	Retry float64 `json:"retry"`
-}
-
-func PopBatch(host string, n int) (*PopResponse, error) {
-	reqURL, err := urlForAPI(host, "/task/pop_batch", map[string]string{"count": strconv.Itoa(n)})
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.Get(reqURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Data *PopResponse `json:"data"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
-	}
-	return response.Data, nil
-}
-
-func PushBatch(host string, tasks []*Task) error {
-	reqURL, err := urlForAPI(host, "/task/push_batch", nil)
-	if err != nil {
-		return err
-	}
-	var contents []string
-	for _, t := range tasks {
-		contents = append(contents, t.Contents)
-	}
-	return postStrings(reqURL, contents)
-}
-
-func CompletedBatch(host string, tasks []*Task) error {
-	reqURL, err := urlForAPI(host, "/task/completed_batch", nil)
-	if err != nil {
-		return err
-	}
-	var ids []string
-	for _, t := range tasks {
-		ids = append(ids, t.ID)
-	}
-	return postStrings(reqURL, ids)
-}
-
-func postStrings(reqURL string, strs []string) error {
-	data, _ := json.Marshal(strs)
-	req, err := http.NewRequest("POST", reqURL, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-func urlForAPI(baseURL, path string, query map[string]string) (string, error) {
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	parsed.Path = path
-	if query != nil {
-		values := url.Values{}
-		for k, v := range query {
-			values.Set(k, v)
-		}
-		parsed.RawQuery = values.Encode()
-	} else {
-		parsed.RawQuery = ""
-	}
-	return parsed.String(), nil
 }
