@@ -31,6 +31,7 @@ func main() {
 	http.HandleFunc("/task/peek", s.ServePeekTask)
 	http.HandleFunc("/task/completed", s.ServeCompletedTask)
 	http.HandleFunc("/task/completed_batch", s.ServeCompletedBatch)
+	http.HandleFunc("/task/keepalive", s.ServeKeepalive)
 	http.HandleFunc("/task/clear", s.ServeClearTasks)
 	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
 	http.HandleFunc("/task/queue_expired", s.ServeQueueExpired)
@@ -181,6 +182,14 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 		} else {
 			serveObject(w, true)
 		}
+	}
+}
+
+func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
+	if s.Queues.Keepalive(r.FormValue("id")) {
+		serveObject(w, true)
+	} else {
+		serveError(w, "there was no in-progress task with the specified `id`")
 	}
 }
 

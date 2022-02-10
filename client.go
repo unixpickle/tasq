@@ -98,6 +98,12 @@ func (c *Client) CompletedBatch(ids []string) error {
 	return c.postJSON("/task/completed_batch", ids, nil)
 }
 
+// Completed tells the server to restart the timeout window for an in-progress
+// task.
+func (c *Client) Keepalive(id string) error {
+	return c.postForm("/task/keepalive", "id", id, nil)
+}
+
 func (c *Client) get(path string, output interface{}) error {
 	reqURL := *c.URL
 	reqURL.Path = path

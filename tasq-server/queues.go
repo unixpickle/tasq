@@ -120,6 +120,14 @@ func (q *QueueState) Completed(id string) bool {
 	return res
 }
 
+// Keepalive restarts the timeout period for the identified task, or returns
+// false if no task with the given ID was in the running queue.
+func (q *QueueState) Keepalive(id string) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return q.running.Keepalive(id)
+}
+
 // Counts gets the current number of tasks in each state.
 func (q *QueueState) Counts() (pending, running, completed int64) {
 	q.lock.RLock()
@@ -293,6 +301,19 @@ func (r *RunningQueue) Completed(id string) *Task {
 	r.deque.Remove(task)
 	delete(r.idToTask, id)
 	return task
+}
+
+// Keepalive restarts the timeout period for the identified task.
+//
+// Returns true if the task was found, or false otherwise.
+func (r *RunningQueue) Keepalive(id string) bool {
+	task, ok := r.idToTask[id]
+	if !ok {
+		return false
+	}
+	r.deque.Remove(task)
+	r.StartedTask(task)
+	return true
 }
 
 // Len gets the number of tasks in the queue.
