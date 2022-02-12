@@ -8,9 +8,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 )
+
+const DefaultKeepaliveInterval = time.Second * 30
 
 // A Task stores information about a popped task.
 type Task struct {
@@ -25,6 +28,10 @@ type Task struct {
 // endpoint paths, but the protocol, host, and port are retained.
 type Client struct {
 	URL *url.URL
+
+	// KeepaliveInterval is used for the keepalive Goroutine created by the
+	// PopRunningTask method. Defaults to DefaultKeepaliveInterval.
+	KeepaliveInterval time.Duration
 }
 
 // Push adds a task to the queue and returns its ID.
@@ -85,6 +92,32 @@ func (c *Client) PopBatch(n int) ([]*Task, *float64, error) {
 		return nil, nil, nil
 	} else {
 		return response.Tasks, &response.Retry, nil
+	}
+}
+
+// PopRunningTask pops a task from the queue, potentially blocking until a task
+// becomes available, and returns a new *RunningTask.
+//
+// If no tasks are pending, nil is returned.
+//
+// If a *RunningTask is successfully returned, the caller must call Completed()
+// or Cancel() on it to clean up resources.
+func (c *Client) PopRunningTask() (*RunningTask, error) {
+	for {
+		task, wait, err := c.Pop()
+		if err != nil {
+			return nil, err
+		} else if task != nil {
+			interval := c.KeepaliveInterval
+			if interval == 0 {
+				interval = DefaultKeepaliveInterval
+			}
+			return newRunningTask(c, task.Contents, task.ID, interval), nil
+		} else if wait != nil {
+			time.Sleep(time.Duration(float64(time.Second) * (*wait)))
+		} else {
+			return nil, nil
+		}
 	}
 }
 
