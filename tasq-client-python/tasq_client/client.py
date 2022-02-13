@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
-from .check_type import CheckTypeException, OptionalKey, TemplateUnion
+from .check_type import CheckTypeException, OptionalKey, TemplateUnion, check_type
 
 
 @dataclass
