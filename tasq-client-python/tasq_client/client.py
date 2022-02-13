@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
+from .check_type import CheckTypeException, OptionalKey, TemplateUnion
+
 
 @dataclass
 class Task:
@@ -26,12 +28,16 @@ class TasqClient:
         number of seconds until the next in-progress task will expire. If this
         retry time is also None, then the queue has been exhausted.
         """
-        result = self._get("/task/pop", check_type=dict)
+        result = self._get(
+            "/task/pop",
+            check_type=dict(
+                id=str,
+                contents=str,
+                retry=TemplateUnion([float, int]),
+                done=bool,
+            ),
+        )
         if "id" in result and "contents" in result:
-            if not isinstance(result["id"], str) or not isinstance(
-                result["contents"], str
-            ):
-                raise TasqMisbehavingServerError("invalid types for id or contents")
             return Task(id=result["id"], contents=result["contents"]), None
         elif "done" not in result:
             raise TasqMisbehavingServerError("no done field in response")
@@ -40,12 +46,6 @@ class TasqClient:
         elif "retry" not in result:
             raise TasqMisbehavingServerError("missing retry value")
         else:
-            if not isinstance(result["retry"], float) and not isinstance(
-                result["retry"], int
-            ):
-                raise TasqMisbehavingServerError(
-                    f"invalid type for retry field: {result['retry']}"
-                )
             return None, float(result["retry"])
 
     def _get(self, path: str, check_type: Optional[Any] = None) -> Any:
@@ -80,15 +80,19 @@ def _process_response(response: requests.Response, check_type: Optional[Any]) ->
         parsed = response.json()
     except Exception as exc:
         raise TasqMisbehavingServerError("failed to get JSON from response") from exc
+
+    check_template = {
+        OptionalKey("error"): str,
+        OptionalKey("data"): object if check_type is None else check_type,
+    }
+    try:
+        check_type(check_template, parsed)
+    except CheckTypeException as exc:
+        raise TasqMisbehavingServerError(f"invalid response object: {exc}")
+
     if "error" in parsed:
         raise TasqRemoteError(parsed["error"])
     elif "data" in parsed:
-        result = parsed["data"]
-        if check_type is not None:
-            if not isinstance(result, check_type):
-                raise TasqMisbehavingServerError(
-                    f"expected response of type {check_type} but got {type(result)}"
-                )
-        return result
+        return parsed["data"]
     else:
         raise TasqMisbehavingServerError("missing error or data fields in response")
