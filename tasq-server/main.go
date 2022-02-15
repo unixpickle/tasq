@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/unixpickle/essentials"
 )
 
 func main() {
@@ -35,7 +37,7 @@ func main() {
 	http.HandleFunc("/task/clear", s.ServeClearTasks)
 	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
 	http.HandleFunc("/task/queue_expired", s.ServeQueueExpired)
-	http.ListenAndServe(addr, nil)
+	essentials.Must(http.ListenAndServe(addr, nil))
 }
 
 type Server struct {
