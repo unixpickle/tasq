@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -19,6 +19,10 @@ class TasqClient:
     def push(self, contents: str) -> str:
         """Push a task and get its resulting ID."""
         return self._post_form("/task/push", dict(contents=contents), check_type=str)
+
+    def push_batch(self, ids: List[str]) -> List[str]:
+        """Push a batch of tasks and get their resulting IDs."""
+        return self._post_form("/task/push_batch", ids, check_type=[str])
 
     def pop(self) -> Tuple[Optional[Task], Optional[float]]:
         """
@@ -47,6 +51,9 @@ class TasqClient:
             raise TasqMisbehavingServerError("missing retry value")
         else:
             return None, float(result["retry"])
+
+    def completed(self, id: str):
+        return self._post_form("/task/completed", dict(id=id))
 
     def _get(self, path: str, check_type: Optional[Any] = None) -> Any:
         return _process_response(requests.get(self._url_for_path(path)), check_type)
