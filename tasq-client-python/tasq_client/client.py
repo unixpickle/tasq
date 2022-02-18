@@ -1,4 +1,8 @@
+import sys
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
+from multiprocessing import Process, Queue
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -15,8 +19,10 @@ class Task:
 
 
 class TasqClient:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, keepalive_interval: float = 30.0):
         self.base_url = base_url
+        self.keepalive_interval = keepalive_interval
+        self.session = requests.Session()
 
     def push(self, contents: str) -> str:
         """Push a task and get its resulting ID."""
@@ -98,25 +104,104 @@ class TasqClient:
         """Indicate that some in-progress tasks have been completed."""
         self._post_json("/task/completed_batch", ids)
 
+    def keepalive(self, id: str):
+        """Reset the timeout interval for a still in-progress task."""
+        self._post_form("/task/keepalive", dict(id=id))
+
+    @contextmanager
+    def pop_running_task(self) -> Optional["RunningTask"]:
+        """
+        Pop a task from the queue and wrap it in a RunningTask, blocking until
+        the queue is completely empty or a task is successfully popped.
+
+        The resulting RunningTask manages a background process that sends
+        keepalives for the returned task ID at regular intervals.
+
+        This is meant to be used in a `with` clause. When the `with` clause is
+        exited, the keepalive loop is stopped, and the task will be marked as
+        completed unless the with clause is exited with an exception.
+        """
+        while True:
+            task, timeout = self.pop()
+            if task is not None:
+                rt = RunningTask(self, id=task.id, contents=task.contents)
+                try:
+                    yield rt
+                    rt.completed()
+                finally:
+                    rt.cancel()
+                return
+            elif timeout is not None:
+                time.sleep(timeout)
+            else:
+                yield None
+                return
+
     def _get(self, path: str, type_template: Optional[Any] = None) -> Any:
-        return _process_response(requests.get(self._url_for_path(path)), type_template)
+        return _process_response(
+            self.session.get(self._url_for_path(path)), type_template
+        )
 
     def _post_form(
         self, path: str, args: Dict[str, str], type_template: Optional[Any] = None
     ) -> Any:
         return _process_response(
-            requests.post(self._url_for_path(path), data=args), type_template
+            self.session.post(self._url_for_path(path), data=args), type_template
         )
 
     def _post_json(
         self, path: str, data: Any, type_template: Optional[Any] = None
     ) -> Any:
         return _process_response(
-            requests.post(self._url_for_path(path), json=data), type_template
+            self.session.post(self._url_for_path(path), json=data), type_template
         )
 
     def _url_for_path(self, path: str) -> str:
         return self.base_url + path
+
+
+@dataclass
+class RunningTask(Task):
+    """
+    A task object that periodically sends keepalives in the background until
+    cancel() or completed() is called.
+
+    When used as a context manager, the background keepalive loop will always
+    be terminated when the context is exited. The task will be marked as
+    complete unless the context was exited with an exception.
+    """
+
+    def __init__(self, client: TasqClient, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.client = client
+        self._proc = Process(
+            target=RunningTask._keepalive_worker,
+            name="tasq-keepalive-worker",
+            args=(client.base_url, client.keepalive_interval, self.id),
+            daemon=True,
+        )
+        self._proc.start()
+
+    def cancel(self):
+        if self._proc is None:
+            return
+        self._proc.kill()
+        self._proc.join()
+        self._proc = None
+
+    def completed(self):
+        self.cancel()
+        self.client.completed(self.id)
+
+    @staticmethod
+    def _keepalive_worker(base_url: str, interval: float, task_id: str):
+        client = TasqClient(base_url)
+        while True:
+            try:
+                client.keepalive(task_id)
+            except Exception as exc:
+                print(f"exception in tasq keepalive worker: {exc}", file=sys.stderr)
+            time.sleep(interval)
 
 
 class TasqRemoteError(Exception):
