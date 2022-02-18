@@ -21,6 +21,13 @@ type Task struct {
 	Contents string `json:"contents"`
 }
 
+// QueueCounts stores the number of in-progress, pending, and completed tasks.
+type QueueCounts struct {
+	Completed int64 `json:"completed"`
+	Pending   int64 `json:"pending"`
+	Running   int64 `json:"running"`
+}
+
 // A Client makes API calls to a tasq server.
 //
 // The server is identified as a URL. For example, you might provide a parsed
@@ -32,6 +39,17 @@ type Client struct {
 	// KeepaliveInterval is used for the keepalive Goroutine created by the
 	// PopRunningTask method. Defaults to DefaultKeepaliveInterval.
 	KeepaliveInterval time.Duration
+}
+
+// NewClient creates a client with a base server URL.
+//
+// Returns an error if the URL fails to parse.
+func NewClient(baseURL string) (*Client, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, errors.Wrap(err, "new client")
+	}
+	return &Client{URL: parsed}, nil
 }
 
 // Push adds a task to the queue and returns its ID.
@@ -135,6 +153,15 @@ func (c *Client) CompletedBatch(ids []string) error {
 // task.
 func (c *Client) Keepalive(id string) error {
 	return c.postForm("/task/keepalive", "id", id, nil)
+}
+
+// QueueCounts gets the number of tasks in each queue.
+func (c *Client) QueueCounts() (*QueueCounts, error) {
+	var result QueueCounts
+	if err := c.get("/counts", &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *Client) get(path string, output interface{}) error {
