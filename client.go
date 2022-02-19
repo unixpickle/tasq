@@ -25,6 +25,7 @@ type Task struct {
 type QueueCounts struct {
 	Completed int64 `json:"completed"`
 	Pending   int64 `json:"pending"`
+	Expired   int64 `json:"expired"`
 	Running   int64 `json:"running"`
 }
 
