@@ -129,10 +129,17 @@ func (q *QueueState) Keepalive(id string) bool {
 }
 
 // Counts gets the current number of tasks in each state.
-func (q *QueueState) Counts() (pending, running, completed int64) {
+func (q *QueueState) Counts() *QueueCounts {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
-	return int64(q.pending.Len()), int64(q.running.Len()), q.completionCounter
+	runningTotal := q.running.Len()
+	runningExpired := q.running.NumExpired()
+	return &QueueCounts{
+		Pending:   int64(q.pending.Len()),
+		Running:   int64(runningTotal - runningExpired),
+		Expired:   int64(runningExpired),
+		Completed: q.completionCounter,
+	}
 }
 
 // Clear empties the queues and resets the completion counter.
@@ -321,6 +328,18 @@ func (r *RunningQueue) Len() int {
 	return r.deque.Len()
 }
 
+// NumExpired gets the number of expired tasks.
+func (r *RunningQueue) NumExpired() int {
+	now := time.Now()
+	task := r.deque.first
+	n := 0
+	for task != nil && !task.expiration.After(now) {
+		n++
+		task = task.queueNext
+	}
+	return n
+}
+
 // ExpireAll changes the timeout for all tasks to be before now.
 func (r *RunningQueue) ExpireAll() int {
 	n := 0
@@ -335,4 +354,11 @@ func (r *RunningQueue) ExpireAll() int {
 func (r *RunningQueue) Clear() {
 	r.idToTask = map[string]*Task{}
 	r.deque = &TaskDeque{}
+}
+
+type QueueCounts struct {
+	Pending   int64 `json:"pending"`
+	Running   int64 `json:"running"`
+	Expired   int64 `json:"expired"`
+	Completed int64 `json:"completed"`
 }

@@ -47,10 +47,11 @@ type Server struct {
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" || r.URL.Path == "" {
 		w.Header().Set("content-type", "text/plain")
-		pending, running, completed := s.Queues.Counts()
-		fmt.Fprintf(w, "Pending tasks: %d\n", pending)
-		fmt.Fprintf(w, "In-progress tasks: %d\n", running)
-		fmt.Fprintf(w, "Completed tasks: %d\n", completed)
+		counts := s.Queues.Counts()
+		fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
+		fmt.Fprintf(w, "In progress: %d\n", counts.Running)
+		fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
+		fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
 	} else {
 		w.Header().Set("content-type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
@@ -59,8 +60,7 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
-	pending, running, completed := s.Queues.Counts()
-	serveObject(w, map[string]int64{"pending": pending, "running": running, "completed": completed})
+	serveObject(w, s.Queues.Counts())
 }
 
 func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {

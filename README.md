@@ -16,8 +16,8 @@ Here are endpoints for pushing and popping tasks:
  * `/task/completed` - indicate that the task is completed. Simply provide a `?id=X` query argument.
 
 Additionally, these are some endpoints that may be helpful for maintaining a running queue in practice:
- * `/counts` - get a dictionary containing sizes of queues. Has keys `pending`, `running`, and `completed`.
+ * `/counts` - get a dictionary containing sizes of queues. Has keys `pending`, `running`, `expired`, and `completed`.
  * `/task/peek` - look at the next task that would be returned by `/task/pop`. When the queue is empty but tasks are still in progress (but not timed out), this returns extra information. In addition to `done` and `retry` fields, this will return a `next` field containing a dictionary with `id` and `contents` of the next task that will expire. This can make it easier for a human to see which tasks are repeatedly failing or timing out.
  * `/task/clear` - delete all pending and running tasks in the queue.
  * `/task/expire_all` - set all currently running tasks as expired so that they can be re-popped immediately.
- * `/task/queue_expired` - move all expired tasks from the `in-progress` queue to the `pending` queue. This is mostly helpful to get more accurate information in the `/counts` endpoint, but it will also have an effect on prematurely expired tasks: if any worker was still working on an expired task and calls `/task/completed`, a task in the `pending` queue will not be successfully marked as completed.
+ * `/task/queue_expired` - move all expired tasks from the `in-progress` queue to the `pending` queue. This used to be helpful when the `/counts` endpoint didn't count expired tasks, but it will also have an effect on prematurely expired tasks: if any worker was still working on an expired task and calls `/task/completed`, a task in the `pending` queue will not be successfully marked as completed.
