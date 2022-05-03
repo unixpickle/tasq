@@ -22,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	s := &Server{
-		Queues: NewQueueState(timeout),
+		Queues: NewQueueStateMux(timeout),
 	}
 	http.HandleFunc("/", s.ServeIndex)
 	http.HandleFunc("/counts", s.ServeCounts)
@@ -41,17 +41,19 @@ func main() {
 }
 
 type Server struct {
-	Queues *QueueState
+	Queues *QueueStateMux
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" || r.URL.Path == "" {
 		w.Header().Set("content-type", "text/plain")
-		counts := s.Queues.Counts()
-		fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
-		fmt.Fprintf(w, "In progress: %d\n", counts.Running)
-		fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
-		fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
+		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			counts := qs.Counts()
+			fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
+			fmt.Fprintf(w, "In progress: %d\n", counts.Running)
+			fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
+			fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
+		})
 	} else {
 		w.Header().Set("content-type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
@@ -60,7 +62,9 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
-	serveObject(w, s.Queues.Counts())
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		serveObject(w, qs.Counts())
+	})
 }
 
 func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +72,9 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 	if contents == "" {
 		serveError(w, "must specify non-empty `contents` parameter")
 	} else {
-		serveObject(w, s.Queues.Push(contents))
+		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			serveObject(w, qs.Push(contents))
+		})
 	}
 }
 
@@ -82,15 +88,21 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 		serveError(w, err.Error())
 	} else {
 		ids := []string{}
-		for _, c := range contents {
-			ids = append(ids, s.Queues.Push(c))
-		}
+		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			for _, c := range contents {
+				ids = append(ids, qs.Push(c))
+			}
+		})
 		serveObject(w, ids)
 	}
 }
 
 func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
-	task, nextTry := s.Queues.Pop()
+	var task *Task
+	var nextTry *time.Time
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		task, nextTry = qs.Pop()
+	})
 	if task != nil {
 		serveObject(w, task)
 	} else {
@@ -116,7 +128,11 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, nextTry := s.Queues.PopBatch(n)
+	var tasks []*Task
+	var nextTry *time.Time
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		tasks, nextTry = qs.PopBatch(n)
+	})
 
 	result := map[string]interface{}{
 		"done": len(tasks) == 0 && nextTry == nil,
@@ -135,7 +151,11 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
-	task, nextTask, nextTime := s.Queues.Peek()
+	var task, nextTask *Task
+	var nextTime *time.Time
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		task, nextTask, nextTime = qs.Peek()
+	})
 	if task != nil {
 		serveObject(w, map[string]interface{}{"contents": task.Contents, "id": task.ID})
 	} else {
@@ -156,7 +176,11 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
-	if s.Queues.Completed(r.FormValue("id")) {
+	var status bool
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		status = qs.Completed(r.FormValue("id"))
+	})
+	if status {
 		serveObject(w, true)
 	} else {
 		serveError(w, "there was no in-progress task with the specified `id`")
@@ -173,11 +197,13 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 		serveError(w, err.Error())
 	} else {
 		var failures []string
-		for _, id := range ids {
-			if !s.Queues.Completed(id) {
-				failures = append(failures, id)
+		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			for _, id := range ids {
+				if !qs.Completed(id) {
+					failures = append(failures, id)
+				}
 			}
-		}
+		})
 		if len(failures) > 0 {
 			serveError(w, "there were no in-progress tasks with the specified ids: "+
 				strings.Join(failures, ", "))
@@ -188,7 +214,11 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
-	if s.Queues.Keepalive(r.FormValue("id")) {
+	var status bool
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		status = qs.Keepalive(r.FormValue("id"))
+	})
+	if status {
 		serveObject(w, true)
 	} else {
 		serveError(w, "there was no in-progress task with the specified `id`")
@@ -196,17 +226,25 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
-	s.Queues.Clear()
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		qs.Clear()
+	})
 	serveObject(w, true)
 }
 
 func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
-	n := s.Queues.ExpireAll()
+	var n int
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		n = qs.ExpireAll()
+	})
 	serveObject(w, n)
 }
 
 func (s *Server) ServeQueueExpired(w http.ResponseWriter, r *http.Request) {
-	n := s.Queues.QueueExpired()
+	var n int
+	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		n = qs.QueueExpired()
+	})
 	serveObject(w, n)
 }
 
