@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -50,6 +51,22 @@ func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
 	}()
 
 	f(qs)
+}
+
+// Iterate calls f with every non-empty QueueState in q.
+func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
+	q.lock.Lock()
+	names := make([]string, 0, len(q.queues))
+	for name := range q.queues {
+		names = append(names, name)
+	}
+	q.lock.Unlock()
+	sort.Strings(names)
+	for _, name := range names {
+		q.Get(name, func(qs *QueueState) {
+			f(name, qs)
+		})
+	}
 }
 
 // QueueState maintains two queues of tasks: a pending queue and a running

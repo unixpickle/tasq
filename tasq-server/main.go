@@ -47,13 +47,23 @@ type Server struct {
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" || r.URL.Path == "" {
 		w.Header().Set("content-type", "text/plain")
-		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		found := false
+		s.Queues.Iterate(func(name string, qs *QueueState) {
+			found = true
+			if name == "" {
+				fmt.Fprint(w, "---- Default context ----\n")
+			} else {
+				fmt.Fprintf(w, "---- Context: %s ----\n", name)
+			}
 			counts := qs.Counts()
 			fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
 			fmt.Fprintf(w, "In progress: %d\n", counts.Running)
 			fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
 			fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
 		})
+		if !found {
+			fmt.Fprint(w, "No active queues.")
+		}
 	} else {
 		w.Header().Set("content-type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
