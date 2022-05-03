@@ -44,11 +44,19 @@ type Client struct {
 
 // NewClient creates a client with a base server URL.
 //
+// Optionally, a context name can be passed to scope the task queue.
+//
 // Returns an error if the URL fails to parse.
-func NewClient(baseURL string) (*Client, error) {
+func NewClient(baseURL string, context ...string) (*Client, error) {
+	if len(context) > 1 {
+		panic("zero or one context arguments expected")
+	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, errors.Wrap(err, "new client")
+	}
+	if len(context) == 1 {
+		parsed.RawQuery = (url.Values{"context": context}).Encode()
 	}
 	return &Client{URL: parsed}, nil
 }

@@ -1,5 +1,6 @@
 import sys
 import time
+import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing import Process, Queue
@@ -19,9 +20,12 @@ class Task:
 
 
 class TasqClient:
-    def __init__(self, base_url: str, keepalive_interval: float = 30.0):
-        self.base_url = base_url
+    def __init__(
+        self, base_url: str, keepalive_interval: float = 30.0, context: str = ""
+    ):
+        self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
+        self.context = context
         self.session = requests.Session()
 
     def push(self, contents: str) -> str:
@@ -157,7 +161,7 @@ class TasqClient:
         )
 
     def _url_for_path(self, path: str) -> str:
-        return self.base_url + path
+        return self.base_url + path + "?context=" + urllib.parse.quote(self.context)
 
 
 @dataclass
