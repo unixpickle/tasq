@@ -181,7 +181,7 @@ class RunningTask(Task):
         self._proc = Process(
             target=RunningTask._keepalive_worker,
             name="tasq-keepalive-worker",
-            args=(client.base_url, client.keepalive_interval, self.id),
+            args=(client.base_url, client.context, client.keepalive_interval, self.id),
             daemon=True,
         )
         self._proc.start()
@@ -198,8 +198,8 @@ class RunningTask(Task):
         self.client.completed(self.id)
 
     @staticmethod
-    def _keepalive_worker(base_url: str, interval: float, task_id: str):
-        client = TasqClient(base_url)
+    def _keepalive_worker(base_url: str, context: str, interval: float, task_id: str):
+        client = TasqClient(base_url, context=context)
         while True:
             try:
                 client.keepalive(task_id)
