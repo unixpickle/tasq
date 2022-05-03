@@ -6,6 +6,52 @@ import (
 	"time"
 )
 
+// QueueStateMux manages multiple (named) QueueStates.
+type QueueStateMux struct {
+	lock    sync.Mutex
+	queues  map[string]*QueueState
+	users   map[string]int
+	timeout time.Duration
+}
+
+// NewQueueStateMux creates a QueueStateMux with the given task timeout.
+func NewQueueStateMux(timeout time.Duration) *QueueStateMux {
+	return &QueueStateMux{
+		queues:  map[string]*QueueState{},
+		users:   map[string]int{},
+		timeout: timeout,
+	}
+}
+
+// Get calls f with a QueueState for the given name. One is created if
+// necessary, and will be destroyed when the queue is cleared.
+//
+// The QueueState should not be accessed outside of f. In particular, f should
+// not store a reference to the QueueState anywhere outside of its scope.
+func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
+	q.lock.Lock()
+	qs, ok := q.queues[name]
+	if !ok {
+		qs = NewQueueState(q.timeout)
+		q.queues[name] = qs
+	}
+	q.users[name]++
+	q.lock.Unlock()
+
+	defer func() {
+		q.lock.Lock()
+		defer q.lock.Unlock()
+		q.users[name]--
+		if q.users[name] == 0 && qs.Cleared() {
+			// Garbage collect unused queues.
+			delete(q.users, name)
+			delete(q.queues, name)
+		}
+	}()
+
+	f(qs)
+}
+
 // QueueState maintains two queues of tasks: a pending queue and a running
 // queue.
 //
@@ -149,6 +195,14 @@ func (q *QueueState) Clear() {
 	q.pending.Clear()
 	q.running.Clear()
 	q.completionCounter = 0
+}
+
+// Cleared returns true if the queue is effectively a fresh object, containing
+// no running tasks and zero completed tasks.
+func (q *QueueState) Cleared() bool {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	return q.pending.Len() == 0 && q.running.Len() == 0 && q.completionCounter == 0
 }
 
 // ExpireAll marks all tasks as expired, allowing them to be immediately popped
