@@ -11,8 +11,10 @@ import (
 
 func main() {
 	var host string
+	var context string
 	var interval time.Duration
 	flag.StringVar(&host, "host", "", "server URL")
+	flag.StringVar(&context, "context", "", "tasq context name")
 	flag.DurationVar(&interval, "interval", time.Second, "number of seconds between count calls")
 	flag.Parse()
 
@@ -20,7 +22,7 @@ func main() {
 		essentials.Die("Must provide -host argument. See -help.")
 	}
 
-	client, err := tasq.NewClient(host)
+	client, err := tasq.NewClient(host, context)
 	essentials.Must(err)
 
 	t1 := time.Now()

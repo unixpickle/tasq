@@ -10,7 +10,6 @@ package main
 import (
 	"flag"
 	"log"
-	"net/url"
 	"time"
 
 	"github.com/unixpickle/essentials"
@@ -19,12 +18,16 @@ import (
 
 func main() {
 	var sourceHost string
+	var sourceContext string
 	var destHost string
+	var destContext string
 	var numTasks int
 	var bufferSize int
 	var waitRunning bool
 	flag.StringVar(&sourceHost, "source", "", "source server URL")
+	flag.StringVar(&sourceContext, "source-context", "", "source context")
 	flag.StringVar(&destHost, "dest", "", "destination server URL")
+	flag.StringVar(&destContext, "dest-context", "", "destination context")
 	flag.IntVar(&numTasks, "count", -1, "number of tasks to transfer")
 	flag.IntVar(&bufferSize, "buffer-size", 4096, "task buffer size")
 	flag.BoolVar(&waitRunning, "wait-running", false,
@@ -35,13 +38,10 @@ func main() {
 		essentials.Die("Must provide -source and -dest. See -help.")
 	}
 
-	sourceURL, err := url.Parse(sourceHost)
+	sourceClient, err := tasq.NewClient(sourceHost, sourceContext)
 	essentials.Must(err)
-	destURL, err := url.Parse(destHost)
+	destClient, err := tasq.NewClient(destHost, destContext)
 	essentials.Must(err)
-
-	sourceClient := &tasq.Client{URL: sourceURL}
-	destClient := &tasq.Client{URL: destURL}
 
 	completed := 0
 	for numTasks == -1 || completed < numTasks {
