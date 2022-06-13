@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ type QueueCounts struct {
 // A Client makes API calls to a tasq server.
 //
 // The server is identified as a URL. For example, you might provide a parsed
-// URL "http://myserver.com:8080". The path in the URL is replaced with API
+// URL "http://myserver.com:8080". The path in the URL is appended with API
 // endpoint paths, but the protocol, host, and port are retained.
 type Client struct {
 	URL *url.URL
@@ -174,9 +175,7 @@ func (c *Client) QueueCounts() (*QueueCounts, error) {
 }
 
 func (c *Client) get(path string, output interface{}) error {
-	reqURL := *c.URL
-	reqURL.Path = path
-
+	reqURL := c.urlForPath(path)
 	resp, err := http.Get(reqURL.String())
 	if err := c.handleResponse(resp, err, output); err != nil {
 		return errors.Wrap(err, "get "+path)
@@ -198,9 +197,7 @@ func (c *Client) postJSON(path string, input, output interface{}) error {
 }
 
 func (c *Client) post(path string, contentType string, input io.Reader, output interface{}) error {
-	reqURL := *c.URL
-	reqURL.Path = path
-
+	reqURL := c.urlForPath(path)
 	resp, err := http.Post(reqURL.String(), contentType, input)
 	if err := c.handleResponse(resp, err, output); err != nil {
 		return errors.Wrap(err, "post "+path)
@@ -226,4 +223,14 @@ func (c *Client) handleResponse(resp *http.Response, err error, output interface
 	} else {
 		return nil
 	}
+}
+
+func (c *Client) urlForPath(p string) *url.URL {
+	u := *c.URL
+	if u.Path == "/" || u.Path == "" {
+		u.Path = p
+	} else {
+		u.Path = path.Join(u.Path, p)
+	}
+	return &u
 }

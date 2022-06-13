@@ -16,36 +16,44 @@ import (
 
 func main() {
 	var addr string
+	var pathPrefix string
 	var timeout time.Duration
 	flag.StringVar(&addr, "addr", ":8080", "address to listen on")
+	flag.StringVar(&pathPrefix, "path-prefix", "/", "prefix for URL paths")
 	flag.DurationVar(&timeout, "timeout", time.Minute*15, "timeout of individual tasks")
 	flag.Parse()
 
-	s := &Server{
-		Queues: NewQueueStateMux(timeout),
+	if !strings.HasSuffix(pathPrefix, "/") || !strings.HasPrefix(pathPrefix, "/") {
+		essentials.Die("path prefix must start and end with a '/' character")
 	}
-	http.HandleFunc("/", s.ServeIndex)
-	http.HandleFunc("/counts", s.ServeCounts)
-	http.HandleFunc("/task/push", s.ServePushTask)
-	http.HandleFunc("/task/push_batch", s.ServePushBatch)
-	http.HandleFunc("/task/pop", s.ServePopTask)
-	http.HandleFunc("/task/pop_batch", s.ServePopBatch)
-	http.HandleFunc("/task/peek", s.ServePeekTask)
-	http.HandleFunc("/task/completed", s.ServeCompletedTask)
-	http.HandleFunc("/task/completed_batch", s.ServeCompletedBatch)
-	http.HandleFunc("/task/keepalive", s.ServeKeepalive)
-	http.HandleFunc("/task/clear", s.ServeClearTasks)
-	http.HandleFunc("/task/expire_all", s.ServeExpireTasks)
-	http.HandleFunc("/task/queue_expired", s.ServeQueueExpired)
+
+	s := &Server{
+		PathPrefix: pathPrefix,
+		Queues:     NewQueueStateMux(timeout),
+	}
+	http.HandleFunc(pathPrefix, s.ServeIndex)
+	http.HandleFunc(pathPrefix+"counts", s.ServeCounts)
+	http.HandleFunc(pathPrefix+"task/push", s.ServePushTask)
+	http.HandleFunc(pathPrefix+"task/push_batch", s.ServePushBatch)
+	http.HandleFunc(pathPrefix+"task/pop", s.ServePopTask)
+	http.HandleFunc(pathPrefix+"task/pop_batch", s.ServePopBatch)
+	http.HandleFunc(pathPrefix+"task/peek", s.ServePeekTask)
+	http.HandleFunc(pathPrefix+"task/completed", s.ServeCompletedTask)
+	http.HandleFunc(pathPrefix+"task/completed_batch", s.ServeCompletedBatch)
+	http.HandleFunc(pathPrefix+"task/keepalive", s.ServeKeepalive)
+	http.HandleFunc(pathPrefix+"task/clear", s.ServeClearTasks)
+	http.HandleFunc(pathPrefix+"task/expire_all", s.ServeExpireTasks)
+	http.HandleFunc(pathPrefix+"task/queue_expired", s.ServeQueueExpired)
 	essentials.Must(http.ListenAndServe(addr, nil))
 }
 
 type Server struct {
-	Queues *QueueStateMux
+	PathPrefix string
+	Queues     *QueueStateMux
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" || r.URL.Path == "" {
+	if r.URL.Path == s.PathPrefix || r.URL.Path+"/" == s.PathPrefix {
 		w.Header().Set("content-type", "text/plain")
 		found := false
 		s.Queues.Iterate(func(name string, qs *QueueState) {
