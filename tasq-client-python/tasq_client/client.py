@@ -21,12 +21,22 @@ class Task:
 
 class TasqClient:
     def __init__(
-        self, base_url: str, keepalive_interval: float = 30.0, context: str = ""
+        self,
+        base_url: str,
+        keepalive_interval: float = 30.0,
+        context: str = "",
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
         self.context = context
+        self.username = username
+        self.password = password
         self.session = requests.Session()
+        if username is not None or password is not None:
+            assert username is not None and password is not None
+            self.session.auth = (username, password)
 
     def push(self, contents: str) -> str:
         """Push a task and get its resulting ID."""
@@ -181,7 +191,14 @@ class RunningTask(Task):
         self._proc = Process(
             target=RunningTask._keepalive_worker,
             name="tasq-keepalive-worker",
-            args=(client.base_url, client.context, client.keepalive_interval, self.id),
+            args=(
+                client.base_url,
+                client.context,
+                client.username,
+                client.password,
+                client.keepalive_interval,
+                self.id,
+            ),
             daemon=True,
         )
         self._proc.start()
@@ -198,8 +215,17 @@ class RunningTask(Task):
         self.client.completed(self.id)
 
     @staticmethod
-    def _keepalive_worker(base_url: str, context: str, interval: float, task_id: str):
-        client = TasqClient(base_url, context=context)
+    def _keepalive_worker(
+        base_url: str,
+        context: str,
+        username: Optional[str],
+        password: Optional[str],
+        interval: float,
+        task_id: str,
+    ):
+        client = TasqClient(
+            base_url, context=context, username=username, password=password
+        )
         while True:
             try:
                 client.keepalive(task_id)
