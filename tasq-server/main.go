@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -17,9 +18,13 @@ import (
 func main() {
 	var addr string
 	var pathPrefix string
+	var authUsername string
+	var authPassword string
 	var timeout time.Duration
 	flag.StringVar(&addr, "addr", ":8080", "address to listen on")
 	flag.StringVar(&pathPrefix, "path-prefix", "/", "prefix for URL paths")
+	flag.StringVar(&authUsername, "auth-username", "", "username for basic auth")
+	flag.StringVar(&authPassword, "auth-password", "", "password for basic auth")
 	flag.DurationVar(&timeout, "timeout", time.Minute*15, "timeout of individual tasks")
 	flag.Parse()
 
@@ -28,8 +33,10 @@ func main() {
 	}
 
 	s := &Server{
-		PathPrefix: pathPrefix,
-		Queues:     NewQueueStateMux(timeout),
+		PathPrefix:   pathPrefix,
+		AuthUsername: authUsername,
+		AuthPassword: authPassword,
+		Queues:       NewQueueStateMux(timeout),
 	}
 	http.HandleFunc(pathPrefix, s.ServeIndex)
 	http.HandleFunc(pathPrefix+"counts", s.ServeCounts)
@@ -48,11 +55,16 @@ func main() {
 }
 
 type Server struct {
-	PathPrefix string
-	Queues     *QueueStateMux
+	PathPrefix   string
+	AuthUsername string
+	AuthPassword string
+	Queues       *QueueStateMux
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	if r.URL.Path == s.PathPrefix || r.URL.Path+"/" == s.PathPrefix {
 		w.Header().Set("content-type", "text/plain")
 		found := false
@@ -80,12 +92,18 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		serveObject(w, qs.Counts())
 	})
 }
 
 func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	contents := r.FormValue("contents")
 	if contents == "" {
 		serveError(w, "must specify non-empty `contents` parameter")
@@ -97,6 +115,9 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return
@@ -116,6 +137,9 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var task *Task
 	var nextTry *time.Time
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
@@ -137,6 +161,9 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	n, err := strconv.Atoi(r.FormValue("count"))
 	if err != nil {
 		serveError(w, "invalid 'count' parameter: "+err.Error())
@@ -169,6 +196,9 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var task, nextTask *Task
 	var nextTime *time.Time
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
@@ -194,6 +224,9 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var status bool
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		status = qs.Completed(r.FormValue("id"))
@@ -206,6 +239,9 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return
@@ -232,6 +268,9 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var status bool
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		status = qs.Keepalive(r.FormValue("id"))
@@ -244,6 +283,9 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		qs.Clear()
 	})
@@ -251,6 +293,9 @@ func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var n int
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		n = qs.ExpireAll()
@@ -259,11 +304,38 @@ func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeQueueExpired(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
 	var n int
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		n = qs.QueueExpired()
 	})
 	serveObject(w, n)
+}
+
+func (s *Server) BasicAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.AuthUsername == "" && s.AuthPassword == "" {
+		return true
+	}
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		w.Header().Set("www-authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error": "basic auth must be provided"}`))
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(username), []byte(s.AuthUsername)) == 1 &&
+		subtle.ConstantTimeCompare([]byte(password), []byte(s.AuthPassword)) == 1 {
+		return true
+	} else {
+		w.Header().Set("www-authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error": "incorrect credentials"}`))
+		return false
+	}
 }
 
 func serveObject(w http.ResponseWriter, obj interface{}) {
