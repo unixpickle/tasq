@@ -19,15 +19,23 @@ import (
 func main() {
 	var sourceHost string
 	var sourceContext string
+	var sourceUsername string
+	var sourcePassword string
 	var destHost string
 	var destContext string
+	var destUsername string
+	var destPassword string
 	var numTasks int
 	var bufferSize int
 	var waitRunning bool
 	flag.StringVar(&sourceHost, "source", "", "source server URL")
 	flag.StringVar(&sourceContext, "source-context", "", "source context")
+	flag.StringVar(&sourceUsername, "source-username", "", "source basic auth username")
+	flag.StringVar(&sourcePassword, "source-password", "", "source basic auth password")
 	flag.StringVar(&destHost, "dest", "", "destination server URL")
 	flag.StringVar(&destContext, "dest-context", "", "destination context")
+	flag.StringVar(&destUsername, "dest-username", "", "destination basic auth username")
+	flag.StringVar(&destPassword, "dest-password", "", "destination basic auth password")
 	flag.IntVar(&numTasks, "count", -1, "number of tasks to transfer")
 	flag.IntVar(&bufferSize, "buffer-size", 4096, "task buffer size")
 	flag.BoolVar(&waitRunning, "wait-running", false,
@@ -38,9 +46,10 @@ func main() {
 		essentials.Die("Must provide -source and -dest. See -help.")
 	}
 
-	sourceClient, err := tasq.NewClient(sourceHost, sourceContext)
+	sourceClient, err := tasq.NewClient(sourceHost, sourceContext, sourceUsername, sourcePassword)
 	essentials.Must(err)
-	destClient, err := tasq.NewClient(destHost, destContext)
+
+	destClient, err := tasq.NewClient(destHost, destContext, destUsername, destPassword)
 	essentials.Must(err)
 
 	completed := 0

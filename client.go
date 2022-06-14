@@ -38,6 +38,10 @@ type QueueCounts struct {
 type Client struct {
 	URL *url.URL
 
+	// Provide to enable basic auth.
+	Username string
+	Password string
+
 	// KeepaliveInterval is used for the keepalive Goroutine created by the
 	// PopRunningTask method. Defaults to DefaultKeepaliveInterval.
 	KeepaliveInterval time.Duration
@@ -45,21 +49,27 @@ type Client struct {
 
 // NewClient creates a client with a base server URL.
 //
-// Optionally, a context name can be passed to scope the task queue.
+// Optionally, a context name can be passed to scope the task queue,
+// as well as a username and password.
 //
 // Returns an error if the URL fails to parse.
-func NewClient(baseURL string, context ...string) (*Client, error) {
-	if len(context) > 1 {
+func NewClient(baseURL string, contextUserPass ...string) (*Client, error) {
+	if len(contextUserPass) != 1 && len(contextUserPass) != 3 {
 		panic("zero or one context arguments expected")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, errors.Wrap(err, "new client")
 	}
-	if len(context) == 1 {
-		parsed.RawQuery = (url.Values{"context": context}).Encode()
+	if len(contextUserPass) > 0 {
+		parsed.RawQuery = (url.Values{"context": contextUserPass[:1]}).Encode()
 	}
-	return &Client{URL: parsed}, nil
+	res := &Client{URL: parsed}
+	if len(contextUserPass) == 3 {
+		res.Username = contextUserPass[1]
+		res.Password = contextUserPass[2]
+	}
+	return res, nil
 }
 
 // Push adds a task to the queue and returns its ID.
@@ -176,7 +186,14 @@ func (c *Client) QueueCounts() (*QueueCounts, error) {
 
 func (c *Client) get(path string, output interface{}) error {
 	reqURL := c.urlForPath(path)
-	resp, err := http.Get(reqURL.String())
+	req, err := http.NewRequest("GET", reqURL.String(), nil)
+	if err != nil {
+		return errors.Wrap(err, "get "+path)
+	}
+	if c.Username != "" || c.Password != "" {
+		req.SetBasicAuth(c.Username, c.Password)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err := c.handleResponse(resp, err, output); err != nil {
 		return errors.Wrap(err, "get "+path)
 	}
@@ -198,7 +215,15 @@ func (c *Client) postJSON(path string, input, output interface{}) error {
 
 func (c *Client) post(path string, contentType string, input io.Reader, output interface{}) error {
 	reqURL := c.urlForPath(path)
-	resp, err := http.Post(reqURL.String(), contentType, input)
+	req, err := http.NewRequest("POST", reqURL.String(), input)
+	if err != nil {
+		return errors.Wrap(err, "get "+path)
+	}
+	req.Header.Set("content-type", contentType)
+	if c.Username != "" || c.Password != "" {
+		req.SetBasicAuth(c.Username, c.Password)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err := c.handleResponse(resp, err, output); err != nil {
 		return errors.Wrap(err, "post "+path)
 	}

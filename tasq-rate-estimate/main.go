@@ -12,9 +12,13 @@ import (
 func main() {
 	var host string
 	var context string
+	var username string
+	var password string
 	var interval time.Duration
 	flag.StringVar(&host, "host", "", "server URL")
 	flag.StringVar(&context, "context", "", "tasq context name")
+	flag.StringVar(&username, "username", "", "basic auth username")
+	flag.StringVar(&password, "password", "", "basic auth password")
 	flag.DurationVar(&interval, "interval", time.Second, "number of seconds between count calls")
 	flag.Parse()
 
