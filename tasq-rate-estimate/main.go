@@ -26,7 +26,7 @@ func main() {
 		essentials.Die("Must provide -host argument. See -help.")
 	}
 
-	client, err := tasq.NewClient(host, context)
+	client, err := tasq.NewClient(host, context, username, password)
 	essentials.Must(err)
 
 	t1 := time.Now()
