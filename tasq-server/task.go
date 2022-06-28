@@ -23,6 +23,38 @@ type TaskDeque struct {
 	count int
 }
 
+// DecodeTaskDeque inverts TaskDeque.Encode(), converting a serializable
+// object back into a linked list deque.
+func DecodeTaskDeque(obj []EncodedTask) *TaskDeque {
+	res := &TaskDeque{count: len(obj)}
+	for i, et := range obj {
+		task := &Task{ID: et.ID, Contents: et.Contents, expiration: et.Expiration}
+		if i == 0 {
+			res.first = task
+			res.last = task
+		} else {
+			res.last.queueNext = task
+			task.queuePrev = res.last
+			res.last = task
+		}
+	}
+	return res
+}
+
+// Encode generates a JSON-serializable object for the task sequence.
+// This can be reversed by DecodeTaskDeque.
+func (t *TaskDeque) Encode() []EncodedTask {
+	objs := make([]EncodedTask, 0, t.count)
+	t.Iterate(func(obj *Task) {
+		objs = append(objs, EncodedTask{
+			ID:         obj.ID,
+			Contents:   obj.Contents,
+			Expiration: obj.expiration,
+		})
+	})
+	return objs
+}
+
 func (t *TaskDeque) Len() int {
 	return t.count
 }
@@ -110,4 +142,18 @@ func (t *TaskDeque) Remove(task *Task) {
 	if task.queueNext != nil || task.queuePrev != nil {
 		panic("pointer unexpectedly preserved")
 	}
+}
+
+func (t *TaskDeque) Iterate(f func(t *Task)) {
+	obj := t.first
+	for obj != nil {
+		f(obj)
+		obj = obj.queueNext
+	}
+}
+
+type EncodedTask struct {
+	ID         string
+	Contents   string
+	Expiration time.Time
 }

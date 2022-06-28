@@ -21,3 +21,9 @@ Additionally, these are some endpoints that may be helpful for maintaining a run
  * `/task/clear` - delete all pending and running tasks in the queue.
  * `/task/expire_all` - set all currently running tasks as expired so that they can be re-popped immediately.
  * `/task/queue_expired` - move all expired tasks from the `in-progress` queue to the `pending` queue. This used to be helpful when the `/counts` endpoint didn't count expired tasks, but it will also have an effect on prematurely expired tasks: if any worker was still working on an expired task and calls `/task/completed`, a task in the `pending` queue will not be successfully marked as completed.
+
+# Persistence
+
+Using the `-save-path` and `-save-interval` flags, you can configure `tasq-server` to periodically dump its state to a file. This can prevent long-running jobs from losing progress if the server crashes or restarts.
+
+When using file persistence, it is possible that some progress will be lost when the server restarts. If tasks were pushed between the latest save and the restart, then these tasks will be lost. If tasks were completed during this interval, then the tasks will reappear in the queue upon restart. To solve the latter issue, one can make workers able to handle already-completed tasks. Solving the former issue is more difficult in general, but it is unlikely to be a problem for jobs where all work is queued at the start and then gradually worked through by workers.

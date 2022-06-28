@@ -1,10 +1,16 @@
 package main
 
 import (
+	"archive/zip"
+	"encoding/json"
+	"io"
+	"os"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 // QueueStateMux manages multiple (named) QueueStates.
@@ -22,6 +28,54 @@ func NewQueueStateMux(timeout time.Duration) *QueueStateMux {
 		users:   map[string]int{},
 		timeout: timeout,
 	}
+}
+
+// DeserializeQueueStateMux reads a file written by QueueStateMux.Serialize().
+func DeserializeQueueStateMux(timeout time.Duration, r io.ReaderAt,
+	size int64) (*QueueStateMux, error) {
+	const context = "deserialize queue state"
+	res := NewQueueStateMux(timeout)
+
+	zf, err := zip.NewReader(r, size)
+	if err != nil {
+		return nil, errors.Wrap(err, context)
+	}
+	for _, file := range zf.File {
+		subReader, err := file.Open()
+		if err != nil {
+			return nil, errors.Wrap(err, context)
+		}
+		var dictObj struct {
+			Name    string
+			Encoded *EncodedQueueState
+		}
+		err = json.NewDecoder(subReader).Decode(&dictObj)
+		subReader.Close()
+		if err != nil {
+			subReader.Close()
+			return nil, errors.Wrap(err, context)
+		}
+		res.queues[dictObj.Name] = DecodeQueueState(dictObj.Encoded)
+		res.users[dictObj.Name] = 0
+	}
+	return res, nil
+}
+
+// ReadQueueStateMux is like DeserializeQueueStateMux(), but reads from a local
+// file instead of an arbitrary reader.
+func ReadQueueStateMux(timeout time.Duration, path string) (*QueueStateMux, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	return DeserializeQueueStateMux(timeout, r, stat.Size())
 }
 
 // Get calls f with a QueueState for the given name. One is created if
@@ -69,6 +123,48 @@ func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
 	}
 }
 
+// Serialize writes the contents of the queue to a file.
+func (q *QueueStateMux) Serialize(w io.Writer) error {
+	const context = "serialize queue state"
+
+	q.lock.Lock()
+	names := make([]string, 0, len(q.queues))
+	for name := range q.queues {
+		names = append(names, name)
+	}
+	q.lock.Unlock()
+
+	resultWriter := zip.NewWriter(w)
+	for i, name := range names {
+		var writeError error
+		q.Get(name, func(q *QueueState) {
+			rw, err := resultWriter.Create(strconv.Itoa(i) + ".json")
+			if err != nil {
+				writeError = err
+				return
+			}
+			var dictObj struct {
+				Name    string
+				Encoded *EncodedQueueState
+			}
+			dictObj.Name = name
+			dictObj.Encoded = q.Encode()
+			if err := json.NewEncoder(rw).Encode(dictObj); err != nil {
+				writeError = err
+			}
+		})
+		if writeError != nil {
+			return errors.Wrap(writeError, context)
+		}
+	}
+
+	if err := resultWriter.Close(); err != nil {
+		return errors.Wrap(err, context)
+	}
+
+	return nil
+}
+
 // QueueState maintains two queues of tasks: a pending queue and a running
 // queue.
 //
@@ -93,6 +189,26 @@ func NewQueueState(timeout time.Duration) *QueueState {
 	return &QueueState{
 		pending: NewPendingQueue(),
 		running: NewRunningQueue(timeout),
+	}
+}
+
+// DecodeQueueState decodes an object from QueueState.Encode()
+func DecodeQueueState(obj *EncodedQueueState) *QueueState {
+	return &QueueState{
+		pending:           DecodePendingQueue(obj.Pending),
+		running:           DecodeRunningQueue(obj.Running),
+		completionCounter: obj.Completed,
+	}
+}
+
+// Encode converts q into a JSON-serializable object.
+func (q *QueueState) Encode() *EncodedQueueState {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return &EncodedQueueState{
+		Pending:   q.pending.Encode(),
+		Running:   q.running.Encode(),
+		Completed: q.completionCounter,
 	}
 }
 
@@ -259,6 +375,22 @@ func NewPendingQueue() *PendingQueue {
 	return &PendingQueue{deque: &TaskDeque{}}
 }
 
+// DecodePendingQueue decodes an object from PendingQueue.Encode().
+func DecodePendingQueue(obj *EncodedPendingQueue) *PendingQueue {
+	return &PendingQueue{
+		deque: DecodeTaskDeque(obj.Deque),
+		curID: obj.CurID,
+	}
+}
+
+// Encode converts p into a JSON-serializable object.
+func (p *PendingQueue) Encode() *EncodedPendingQueue {
+	return &EncodedPendingQueue{
+		Deque: p.deque.Encode(),
+		CurID: p.curID,
+	}
+}
+
 // AddTask creates a new task with the given contents and enqueues it.
 func (p *PendingQueue) AddTask(contents string) *Task {
 	task := &Task{
@@ -313,6 +445,28 @@ func NewRunningQueue(timeout time.Duration) *RunningQueue {
 		idToTask: map[string]*Task{},
 		deque:    &TaskDeque{},
 		timeout:  timeout,
+	}
+}
+
+// DecodeRunningQueue decodes an object from RunningQueue.Encode().
+func DecodeRunningQueue(obj *EncodedRunningQueue) *RunningQueue {
+	deque := DecodeTaskDeque(obj.Deque)
+	idToTask := map[string]*Task{}
+	deque.Iterate(func(t *Task) {
+		idToTask[t.ID] = t
+	})
+	return &RunningQueue{
+		idToTask: idToTask,
+		deque:    deque,
+		timeout:  obj.Timeout,
+	}
+}
+
+// Encode converts the queue into a JSON-serializable object.
+func (r *RunningQueue) Encode() *EncodedRunningQueue {
+	return &EncodedRunningQueue{
+		Deque:   r.deque.Encode(),
+		Timeout: r.timeout,
 	}
 }
 
@@ -432,4 +586,20 @@ type QueueCounts struct {
 	Running   int64 `json:"running"`
 	Expired   int64 `json:"expired"`
 	Completed int64 `json:"completed"`
+}
+
+type EncodedQueueState struct {
+	Pending   *EncodedPendingQueue
+	Running   *EncodedRunningQueue
+	Completed int64
+}
+
+type EncodedPendingQueue struct {
+	Deque []EncodedTask
+	CurID int64
+}
+
+type EncodedRunningQueue struct {
+	Deque   []EncodedTask
+	Timeout time.Duration
 }

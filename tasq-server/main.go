@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,12 +22,16 @@ func main() {
 	var pathPrefix string
 	var authUsername string
 	var authPassword string
+	var savePath string
+	var saveInterval time.Duration
 	var timeout time.Duration
 	flag.StringVar(&addr, "addr", ":8080", "address to listen on")
 	flag.StringVar(&pathPrefix, "path-prefix", "/", "prefix for URL paths")
 	flag.StringVar(&authUsername, "auth-username", "", "username for basic auth")
 	flag.StringVar(&authPassword, "auth-password", "", "password for basic auth")
+	flag.StringVar(&savePath, "save-path", "", "if specified, path to periodically save state to")
 	flag.DurationVar(&timeout, "timeout", time.Minute*15, "timeout of individual tasks")
+	flag.DurationVar(&saveInterval, "save-interval", time.Minute*5, "time between saves")
 	flag.Parse()
 
 	if !strings.HasSuffix(pathPrefix, "/") || !strings.HasPrefix(pathPrefix, "/") {
@@ -36,6 +42,8 @@ func main() {
 		PathPrefix:   pathPrefix,
 		AuthUsername: authUsername,
 		AuthPassword: authPassword,
+		SavePath:     savePath,
+		SaveInterval: saveInterval,
 		Queues:       NewQueueStateMux(timeout),
 	}
 	http.HandleFunc(pathPrefix, s.ServeIndex)
@@ -51,6 +59,7 @@ func main() {
 	http.HandleFunc(pathPrefix+"task/clear", s.ServeClearTasks)
 	http.HandleFunc(pathPrefix+"task/expire_all", s.ServeExpireTasks)
 	http.HandleFunc(pathPrefix+"task/queue_expired", s.ServeQueueExpired)
+	s.SetupSaveLoop(timeout)
 	essentials.Must(http.ListenAndServe(addr, nil))
 }
 
@@ -59,6 +68,8 @@ type Server struct {
 	AuthUsername string
 	AuthPassword string
 	Queues       *QueueStateMux
+	SavePath     string
+	SaveInterval time.Duration
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +346,39 @@ func (s *Server) BasicAuth(w http.ResponseWriter, r *http.Request) bool {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error": "incorrect credentials"}`))
 		return false
+	}
+}
+
+func (s *Server) SetupSaveLoop(timeout time.Duration) {
+	if s.SavePath == "" {
+		return
+	}
+	if _, err := os.Stat(s.SavePath); err == nil {
+		s.Queues, err = ReadQueueStateMux(timeout, s.SavePath)
+		if err != nil {
+			log.Fatal(err)
+		} else {
+			log.Printf("Loaded state from: %s", s.SavePath)
+		}
+	}
+	go s.SaveLoop()
+}
+
+func (s *Server) SaveLoop() {
+	for {
+		time.Sleep(s.SaveInterval)
+		tmpPath := s.SavePath + ".tmp"
+		w, err := os.Create(tmpPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = s.Queues.Serialize(w)
+		w.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+		os.Rename(tmpPath, s.SavePath)
+		log.Printf("Saved state to: %s", s.SavePath)
 	}
 }
 
