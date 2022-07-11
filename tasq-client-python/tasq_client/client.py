@@ -3,7 +3,7 @@ import time
 import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
-from multiprocessing import Process, Queue
+from multiprocessing import Process
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -229,7 +229,7 @@ class RunningTask(Task):
         while True:
             try:
                 client.keepalive(task_id)
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-except
                 print(f"exception in tasq keepalive worker: {exc}", file=sys.stderr)
             time.sleep(interval)
 
@@ -255,7 +255,7 @@ def _process_response(response: requests.Response, type_template: Optional[Any])
     try:
         check_type(check_template, parsed)
     except CheckTypeException as exc:
-        raise TasqMisbehavingServerError(f"invalid response object: {exc}")
+        raise TasqMisbehavingServerError(f"invalid response object: {exc}") from exc
 
     if "error" in parsed:
         raise TasqRemoteError(parsed["error"])
