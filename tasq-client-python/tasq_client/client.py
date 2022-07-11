@@ -20,6 +20,23 @@ class Task:
 
 
 class TasqClient:
+    """
+    An object for interacting with a specific queue in a tasq server.
+
+    :param base_url: the URL for the server, possibly with a trailing
+                     slash, but with no extra path appended to it.
+                     E.g. "http://tasq.mydomain.com/".
+    :param keepalive_interval: for running tasks from pop_running_task(),
+                               this is how often keepalives are sent.
+    :param context: the queue context (empty string uses default queue).
+    :param username: optional username for basic authentication.
+    :param password: optional password for basic authentication.
+    :param max_timeout: the maximum amount of time (in seconds) to wait
+                        between attempts to pop a task in pop_running_task().
+                        Lower values mean waiting less long in the case that
+                        a new task is pushed or all tasks are finished.
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -27,12 +44,14 @@ class TasqClient:
         context: str = "",
         username: Optional[str] = None,
         password: Optional[str] = None,
+        max_timeout: float = 30.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
         self.context = context
         self.username = username
         self.password = password
+        self.max_timeout = max_timeout
         self.session = requests.Session()
         if username is not None or password is not None:
             assert username is not None and password is not None
@@ -146,7 +165,7 @@ class TasqClient:
                     rt.cancel()
                 return
             elif timeout is not None:
-                time.sleep(timeout)
+                time.sleep(min(timeout, self.max_timeout))
             else:
                 yield None
                 return
