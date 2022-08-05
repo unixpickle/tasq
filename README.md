@@ -16,6 +16,8 @@ Here are endpoints for pushing and popping tasks:
  * `/task/completed` - indicate that the task is completed. Simply provide a `?id=X` query argument.
 
 Additionally, these are some endpoints that may be helpful for maintaining a running queue in practice:
+ * `/` - an overview of all the queues, with some buttons and forms to quickly manipulate queues.
+ * `/summary` - a textual overview of all the queues.
  * `/counts` - get a dictionary containing sizes of queues. Has keys `pending`, `running`, `expired`, and `completed`.
  * `/task/peek` - look at the next task that would be returned by `/task/pop`. When the queue is empty but tasks are still in progress (but not timed out), this returns extra information. In addition to `done` and `retry` fields, this will return a `next` field containing a dictionary with `id` and `contents` of the next task that will expire. This can make it easier for a human to see which tasks are repeatedly failing or timing out.
  * `/task/clear` - delete all pending and running tasks in the queue.

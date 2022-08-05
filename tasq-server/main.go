@@ -47,6 +47,7 @@ func main() {
 		Queues:       NewQueueStateMux(timeout),
 	}
 	http.HandleFunc(pathPrefix, s.ServeIndex)
+	http.HandleFunc(pathPrefix+"summary", s.ServeSummary)
 	http.HandleFunc(pathPrefix+"counts", s.ServeCounts)
 	http.HandleFunc(pathPrefix+"task/push", s.ServePushTask)
 	http.HandleFunc(pathPrefix+"task/push_batch", s.ServePushBatch)
@@ -77,24 +78,8 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == s.PathPrefix || r.URL.Path+"/" == s.PathPrefix {
-		w.Header().Set("content-type", "text/plain")
-		found := false
-		s.Queues.Iterate(func(name string, qs *QueueState) {
-			found = true
-			if name == "" {
-				fmt.Fprint(w, "---- Default context ----\n")
-			} else {
-				fmt.Fprintf(w, "---- Context: %s ----\n", name)
-			}
-			counts := qs.Counts()
-			fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
-			fmt.Fprintf(w, "In progress: %d\n", counts.Running)
-			fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
-			fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
-		})
-		if !found {
-			fmt.Fprint(w, "No active queues.")
-		}
+		w.Header().Set("content-type", "text/html")
+		w.Write([]byte(Homepage))
 	} else {
 		w.Header().Set("content-type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
@@ -102,8 +87,45 @@ func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
+	w.Header().Set("content-type", "text/plain")
+	found := false
+	s.Queues.Iterate(func(name string, qs *QueueState) {
+		found = true
+		if name == "" {
+			fmt.Fprint(w, "---- Default context ----\n")
+		} else {
+			fmt.Fprintf(w, "---- Context: %s ----\n", name)
+		}
+		counts := qs.Counts()
+		fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
+		fmt.Fprintf(w, "In progress: %d\n", counts.Running)
+		fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
+		fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
+	})
+	if !found {
+		fmt.Fprint(w, "No active queues.")
+	}
+}
+
 func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
+		return
+	}
+	if r.URL.Query().Get("all") == "1" {
+		allNames := []string{}
+		allCounts := []*QueueCounts{}
+		s.Queues.Iterate(func(name string, qs *QueueState) {
+			allNames = append(allNames, name)
+			allCounts = append(allCounts, qs.Counts())
+		})
+		serveObject(w, map[string]interface{}{
+			"names":  allNames,
+			"counts": allCounts,
+		})
 		return
 	}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
