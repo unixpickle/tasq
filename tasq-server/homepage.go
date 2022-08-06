@@ -153,7 +153,7 @@ const Homepage = `<!doctype html>
 		const countsList = document.getElementById('counts-list');
 		const emptyBox = document.getElementById('empty-box');
 		const errorBox = document.getElementById('error-box');
-		
+
 		async function reloadCounts(actionFn) {
 			countsList.classList.add('counts-loading');
 			emptyBox.classList.add('hidden');
