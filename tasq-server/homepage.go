@@ -28,6 +28,7 @@ const Homepage = `<!doctype html>
 			}
 
 			.panel {
+				display: block;
 				box-sizing: border-box;
 				background-color: white;
 				border: 1px solid #d5d5d5;
@@ -94,15 +95,37 @@ const Homepage = `<!doctype html>
 				padding-top: 0.1em;
 			}
 
+			.counts-item-actions button {
+				margin: 5px;
+			}
+
 			#error-box {
 				text-align: center;
 				color: red;
 			}
 
-			#add-task-box label {
-				display: inline-block;
-				width: 10em;
+			#add-task-box > h1 {
+				margin: 0 0 20px 0;
+				padding: 0;
+				font-size: 1.2em;
+			}
+
+			.add-task-field {
+				margin: 8px 0;
+			}
+
+			.add-task-field label {
 				text-align: right;
+				margin: 0 2px 0 0;
+				width: calc(30%);
+			}
+
+			.add-task-field input {
+				width: calc(60%);
+			}
+
+			.add-task-field label, .add-task-field input {
+				display: inline-block;
 			}
 		</style>
 	</head>
@@ -112,17 +135,17 @@ const Homepage = `<!doctype html>
 			There are no active queues.
 		</div>
 		<div id="error-box" class="width-sizing panel hidden"></div>
-		<div id="add-task-box" class="width-sizing panel">
+		<form id="add-task-box" class="width-sizing panel" onsubmit="return quickAddTask(event);">
 			<h1>Quickly add a task</h1>
-			<div>
+			<div class="add-task-field">
 				<label>Context:</label>
-				<input id="add-task-context" placeholder="Empty for default context">
+				<input id="add-task-context" placeholder="(Leave empty for default context)">
 			</div>
-			<div>
+			<div class="add-task-field">
 				<label>Task contents:</label>
 				<input id="add-task-contents">
 			</div>
-			<button id="add-task-button" onclick="quickAddTask()">Add task</button>
+			<input id="add-task-button" type="submit" value="Add task">
 		</div>
 
 		<script type="text/javascript">
@@ -144,7 +167,7 @@ const Homepage = `<!doctype html>
 			} catch (e) {
 				errorBox.textContent = '' + e;
 				errorBox.classList.remove('hidden');
-				return;
+				return false;
 			} finally {
 				countsList.innerHTML = '';
 				countsList.classList.remove('counts-loading');
@@ -159,6 +182,8 @@ const Homepage = `<!doctype html>
 					addCountsToList(name, counts);
 				});
 			}
+
+			return true;
 		}
 
 		function addCountsToList(name, counts) {
@@ -225,13 +250,20 @@ const Homepage = `<!doctype html>
 			reloadCounts(() => fetch('/task/expire_all?context=' + encodeURIComponent(name)));
 		}
 
-		function quickAddTask() {
+		function quickAddTask(e) {
+			e.preventDefault();
 			const context = document.getElementById('add-task-context').value;
-			const contents = document.getElementById('add-task-contents').value;
+			const contentsField = document.getElementById('add-task-contents');
+			const contents = contentsField.value;
 			reloadCounts(() => {
 				return fetch('/task/push?context=' + encodeURIComponent(context) + '&contents=' +
 					encodeURIComponent(contents));
+			}).then((success) => {
+				if (success) {
+					contentsField.value = '';
+				}
 			});
+			return false;
 		}
 
 		reloadCounts(null);
