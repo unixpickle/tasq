@@ -95,8 +95,31 @@ const Homepage = `<!doctype html>
 				padding-top: 0.1em;
 			}
 
-			.counts-item-actions button {
+			button:focus {
+				outline: 0;
+			}
+
+			.counts-item-action {
+				position: relative;
 				margin: 5px;
+				padding: 5px 10px;
+				border: none;
+				font-size: 1.2em;
+				color: white;
+				background-color: #999;
+				cursor: pointer;
+			}
+
+			.counts-item-action:hover {
+				background-color: #7b7b7b;
+			}
+
+			.counts-item-action-destructive {
+				background-color: #ee6666;
+			}
+
+			.counts-item-action-destructive:hover {
+				background-color: #cc5555;
 			}
 
 			#error-box {
@@ -226,12 +249,16 @@ const Homepage = `<!doctype html>
 			actions.className = 'counts-item-actions';
 
 			[
+				['Peek', peekTask],
 				['Expire All', expireAll],
 				['Delete', deleteContext],
 			].forEach((item) => {
 				const [actionName, actionFn] = item;
 				const actionButton = document.createElement('button');
-				actionButton.className = 'counts-item-action-destructive';
+				actionButton.className = 'counts-item-action';
+				if (actionName === 'Expire All' || actionName === 'Delete') {
+					actionButton.classList.add('counts-item-action-destructive');
+				}
 				actionButton.textContent = actionName;
 				actionButton.addEventListener('click', () => actionFn(name));
 				actions.appendChild(actionButton);
@@ -248,6 +275,15 @@ const Homepage = `<!doctype html>
 
 		function expireAll(name) {
 			reloadCounts(() => fetch('/task/expire_all?context=' + encodeURIComponent(name)));
+		}
+
+		async function peekTask(name) {
+			try {
+				const response = await fetch('/task/peek?context=' + encodeURIComponent(name));
+				alert(await response.text());
+			} catch (e) {
+				alert(e);
+			}
 		}
 
 		function quickAddTask(e) {
