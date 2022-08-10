@@ -250,6 +250,7 @@ const Homepage = `<!doctype html>
 
 			[
 				['Peek', peekTask],
+				['Push', pushTaskPrompt],
 				['Expire All', expireAll],
 				['Delete', deleteContext],
 			].forEach((item) => {
@@ -281,6 +282,24 @@ const Homepage = `<!doctype html>
 			try {
 				const response = await fetch('/task/peek?context=' + encodeURIComponent(name));
 				alert(await response.text());
+			} catch (e) {
+				alert(e);
+			}
+		}
+
+		async function pushTaskPrompt(name) {
+			const contents = prompt('Enter task contents');
+			if (!contents) {
+				return;
+			}
+			try {
+				let value = null;
+				await reloadCounts(async () => {
+					const pushURL = '/task/push?context=' + encodeURIComponent(name) +
+						'&contents=' + encodeURIComponent(contents);
+					const resp = await fetch(pushURL)
+					value = await resp.text();
+				});
 			} catch (e) {
 				alert(e);
 			}
