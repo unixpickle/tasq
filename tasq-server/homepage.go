@@ -99,7 +99,7 @@ const Homepage = `<!doctype html>
 				outline: 0;
 			}
 
-			.counts-item-action {
+			.counts-item-action, .overlay-close-button {
 				position: relative;
 				margin: 5px;
 				padding: 5px 10px;
@@ -110,7 +110,7 @@ const Homepage = `<!doctype html>
 				cursor: pointer;
 			}
 
-			.counts-item-action:hover {
+			.counts-item-action:hover, .overlay-close-button:hover {
 				background-color: #7b7b7b;
 			}
 
@@ -150,6 +150,52 @@ const Homepage = `<!doctype html>
 			.add-task-field label, .add-task-field input {
 				display: inline-block;
 			}
+
+			.overlay-container {
+				display: block;
+				position: absolute;
+				width: 100%;
+				height: 100%;
+				top: 0;
+				left: 0;
+				background-color: rgba(0, 0, 0, 0.5);
+			}
+
+			.overlay-container-hidden {
+				display: none;
+			}
+
+			.overlay-pane {
+				text-align: center;
+				position: absolute;
+				background-color: white;
+				top: 50px;
+				height: 50%;
+			}
+
+			@media screen and (min-width: 620px) {
+				.overlay-pane {
+					width: 580px;
+					left: calc(50% - 290px);
+				}
+			}
+
+			@media screen and (max-width: 620px) {
+				.overlay-pane {
+					width: calc(100% - 40px);
+					left: 20px;
+				}
+			}
+
+			.overlay-textbox {
+				display: block;
+				height: calc(100% - 72px);
+				width: calc(100% - 20px);
+				resize: none;
+				margin: 10px;
+				border: 1px solid #d5d5d5;
+				box-sizing: border-box;
+			}
 		</style>
 	</head>
 	<body>
@@ -169,6 +215,12 @@ const Homepage = `<!doctype html>
 				<input id="add-task-contents">
 			</div>
 			<input id="add-task-button" type="submit" value="Add task">
+		</form>
+		<div id="text-overlay-container" class="overlay-container overlay-container-hidden" onclick="closeTextOverlay()">
+			<div class="overlay-pane" onclick="event.stopPropagation()">
+				<textarea class="overlay-textbox"></textarea>
+				<button class="overlay-close-button" onclick="closeTextOverlay()">Close</button>
+			</div>
 		</div>
 
 		<script type="text/javascript">
@@ -281,7 +333,7 @@ const Homepage = `<!doctype html>
 		async function peekTask(name) {
 			try {
 				const response = await fetch('/task/peek?context=' + encodeURIComponent(name));
-				alert(await response.text());
+				showTextOverlay(JSON.stringify(await response.json(), null, 2));
 			} catch (e) {
 				alert(e);
 			}
@@ -319,6 +371,17 @@ const Homepage = `<!doctype html>
 				}
 			});
 			return false;
+		}
+
+		function showTextOverlay(text) {
+			const container = document.getElementById('text-overlay-container');
+			container.getElementsByClassName('overlay-textbox')[0].value = text;
+			container.classList.remove('overlay-container-hidden');
+		}
+
+		function closeTextOverlay() {
+			const container = document.getElementById('text-overlay-container');
+			container.classList.add('overlay-container-hidden');
 		}
 
 		reloadCounts(null);
