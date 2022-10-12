@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, List
+from typing import Any, Callable
 
 
 @dataclass(frozen=True, eq=True)
@@ -17,8 +17,6 @@ class CheckTypeException(Exception):
     An error indicating that the type of an object does not match the expected
     template for the object's type.
     """
-
-    pass
 
 
 def check_type(template: Any, obj: Any):
@@ -38,6 +36,7 @@ def check_type(template: Any, obj: Any):
 
     The float template will accept both int and float types.
     """
+    # pylint: disable=cell-var-from-loop
     if isinstance(template, dict):
         if not isinstance(obj, dict):
             raise CheckTypeException(f"expected dict but got {type(obj)}")
@@ -55,9 +54,7 @@ def check_type(template: Any, obj: Any):
         assert len(template) == 1
         value_template = template[0]
         for i, value in enumerate(obj):
-            _wrap_check(
-                f"value at index {i}", lambda: check_type(value_template, value)
-            )
+            _wrap_check(f"value at index {i}", lambda: check_type(value_template, value))
     elif template is float:
         if not isinstance(obj, int) and not isinstance(obj, float):
             raise CheckTypeException(
@@ -72,4 +69,5 @@ def _wrap_check(context: str, check_fn: Callable):
     try:
         check_fn()
     except CheckTypeException as exc:
+        # pylint: disable=raise-missing-from
         raise CheckTypeException(f"{context}: {str(exc)}")

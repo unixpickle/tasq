@@ -19,6 +19,16 @@ class Task:
     contents: str
 
 
+@dataclass
+class QueueCounts:
+    """Task counts for a single queue."""
+
+    pending: int
+    running: int
+    expired: int
+    completed: int
+
+
 class TasqClient:
     """
     An object for interacting with a specific queue in a tasq server.
@@ -119,9 +129,7 @@ class TasqClient:
         retry = float(response["retry"]) if "retry" in response else None
 
         if len(response["tasks"]):
-            return [
-                Task(id=x["id"], contents=x["contents"]) for x in response["tasks"]
-            ], retry
+            return [Task(id=x["id"], contents=x["contents"]) for x in response["tasks"]], retry
         elif retry is not None:
             return [], retry
         else:
@@ -170,10 +178,21 @@ class TasqClient:
                 yield None
                 return
 
-    def _get(self, path: str, type_template: Optional[Any] = None) -> Any:
-        return _process_response(
-            self.session.get(self._url_for_path(path)), type_template
+    def counts(self) -> QueueCounts:
+        """Get the number of tasks in each state within the queue."""
+        data = self._get(
+            "/counts",
+            dict(
+                pending=int,
+                running=int,
+                expired=int,
+                completed=int,
+            ),
         )
+        return QueueCounts(**data)
+
+    def _get(self, path: str, type_template: Optional[Any] = None) -> Any:
+        return _process_response(self.session.get(self._url_for_path(path)), type_template)
 
     def _post_form(
         self, path: str, args: Dict[str, str], type_template: Optional[Any] = None
@@ -182,9 +201,7 @@ class TasqClient:
             self.session.post(self._url_for_path(path), data=args), type_template
         )
 
-    def _post_json(
-        self, path: str, data: Any, type_template: Optional[Any] = None
-    ) -> Any:
+    def _post_json(self, path: str, data: Any, type_template: Optional[Any] = None) -> Any:
         return _process_response(
             self.session.post(self._url_for_path(path), json=data), type_template
         )
@@ -242,9 +259,7 @@ class RunningTask(Task):
         interval: float,
         task_id: str,
     ):
-        client = TasqClient(
-            base_url, context=context, username=username, password=password
-        )
+        client = TasqClient(base_url, context=context, username=username, password=password)
         while True:
             try:
                 client.keepalive(task_id)

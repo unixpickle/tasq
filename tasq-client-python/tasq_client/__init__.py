@@ -1,3 +1,17 @@
-from .client import Task, TasqClient, TasqMisbehavingServerError, TasqRemoteError
+from .client import (
+    QueueCounts,
+    RunningTask,
+    Task,
+    TasqClient,
+    TasqMisbehavingServerError,
+    TasqRemoteError,
+)
 
-__all__ = ["TasqClient", "Task", "TasqMisbehavingServerError", "TasqRemoteError"]
+__all__ = [
+    "QueueCounts",
+    "RunningTask",
+    "TasqClient",
+    "Task",
+    "TasqMisbehavingServerError",
+    "TasqRemoteError",
+]
