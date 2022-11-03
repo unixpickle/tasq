@@ -215,10 +215,6 @@ class RunningTask(Task):
     """
     A task object that periodically sends keepalives in the background until
     cancel() or completed() is called.
-
-    When used as a context manager, the background keepalive loop will always
-    be terminated when the context is exited. The task will be marked as
-    complete unless the context was exited with an exception.
     """
 
     def __init__(self, client: TasqClient, *args, **kwargs):
