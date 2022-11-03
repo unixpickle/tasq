@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -173,10 +174,15 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	timeout, timeoutOk := s.TimeoutParam(w, r)
+	if !timeoutOk {
+		return
+	}
+
 	var task *Task
 	var nextTry *time.Time
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		task, nextTry = qs.Pop()
+		task, nextTry = qs.Pop(timeout)
 	})
 	if task != nil {
 		serveObject(w, task)
@@ -197,6 +203,11 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	timeout, timeoutOk := s.TimeoutParam(w, r)
+	if !timeoutOk {
+		return
+	}
+
 	n, err := strconv.Atoi(r.FormValue("count"))
 	if err != nil {
 		serveError(w, "invalid 'count' parameter: "+err.Error())
@@ -209,7 +220,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 	var tasks []*Task
 	var nextTry *time.Time
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		tasks, nextTry = qs.PopBatch(n)
+		tasks, nextTry = qs.PopBatch(n, timeout)
 	})
 
 	result := map[string]interface{}{
@@ -304,9 +315,14 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	timeout, timeoutOk := s.TimeoutParam(w, r)
+	if !timeoutOk {
+		return
+	}
+
 	var status bool
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		status = qs.Keepalive(r.FormValue("id"))
+		status = qs.Keepalive(r.FormValue("id"), timeout)
 	})
 	if status {
 		serveObject(w, true)
@@ -369,6 +385,27 @@ func (s *Server) BasicAuth(w http.ResponseWriter, r *http.Request) bool {
 		w.Write([]byte(`{"error": "incorrect credentials"}`))
 		return false
 	}
+}
+
+func (s *Server) TimeoutParam(w http.ResponseWriter, r *http.Request) (*time.Duration, bool) {
+	timeoutStr := r.URL.Query().Get("timeout")
+	if timeoutStr == "" {
+		return nil, true
+	}
+	parsed, err := strconv.ParseFloat(timeoutStr, 64)
+	duration := time.Millisecond * time.Duration(parsed*1000)
+	if err == nil && duration <= 0.0 {
+		err = errors.New("timeout must be at least one millisecond")
+	}
+	if err != nil {
+		w.Header().Set("www-authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		data, _ := json.Marshal(map[string]string{"error": err.Error()})
+		w.Write(data)
+		return nil, false
+	}
+	return &duration, true
 }
 
 func (s *Server) SetupSaveLoop(timeout time.Duration) {

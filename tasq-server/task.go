@@ -74,6 +74,25 @@ func (t *TaskDeque) PushLast(task *Task) {
 	}
 }
 
+func (t *TaskDeque) PushByExpiration(task *Task) {
+	prev := t.last
+	for prev != nil && prev.expiration.After(task.expiration) {
+		prev = prev.queuePrev
+	}
+	if prev == nil {
+		t.PushFirst(task)
+	} else if prev.queueNext == nil {
+		t.PushLast(task)
+	} else {
+		t.count += 1
+		next := prev.queueNext
+		prev.queueNext = task
+		next.queuePrev = task
+		task.queuePrev = prev
+		task.queueNext = next
+	}
+}
+
 func (t *TaskDeque) PushFirst(task *Task) {
 	t.count += 1
 	if t.first == nil {
@@ -83,7 +102,7 @@ func (t *TaskDeque) PushFirst(task *Task) {
 		task.queueNext = nil
 	} else {
 		t.first.queuePrev = task
-		task.queueNext = t.last
+		task.queueNext = t.first
 		task.queuePrev = nil
 		t.first = task
 	}

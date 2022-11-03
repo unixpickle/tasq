@@ -221,18 +221,18 @@ func (q *QueueState) Push(contents string) string {
 
 // Pop gets a task from the queue, preferring the pending queue and dipping
 // into the expired tasks in the running queue only if necessary.
-func (q *QueueState) Pop() (*Task, *time.Time) {
+func (q *QueueState) Pop(timeout *time.Duration) (*Task, *time.Time) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	nextPending := q.pending.PopTask()
 	if nextPending != nil {
-		q.running.StartedTask(nextPending)
+		q.running.StartedTask(nextPending, timeout)
 		return nextPending, nil
 	}
 
 	nextExpired, nextTry := q.running.PopExpired()
 	if nextExpired != nil {
-		q.running.StartedTask(nextExpired)
+		q.running.StartedTask(nextExpired, timeout)
 		return nextExpired, nil
 	}
 
@@ -244,7 +244,7 @@ func (q *QueueState) Pop() (*Task, *time.Time) {
 // If fewer than n tasks are returned, the second return value is the time that
 // the next running task will expire, or nil if no tasks were running before
 // PopBatch was called.
-func (q *QueueState) PopBatch(n int) ([]*Task, *time.Time) {
+func (q *QueueState) PopBatch(n int, timeout *time.Duration) ([]*Task, *time.Time) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -267,7 +267,7 @@ func (q *QueueState) PopBatch(n int) ([]*Task, *time.Time) {
 	}
 
 	for _, t := range tasks {
-		q.running.StartedTask(t)
+		q.running.StartedTask(t, timeout)
 	}
 
 	return tasks, nextTry
@@ -301,10 +301,10 @@ func (q *QueueState) Completed(id string) bool {
 
 // Keepalive restarts the timeout period for the identified task, or returns
 // false if no task with the given ID was in the running queue.
-func (q *QueueState) Keepalive(id string) bool {
+func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	return q.running.Keepalive(id)
+	return q.running.Keepalive(id, timeout)
 }
 
 // Counts gets the current number of tasks in each state.
@@ -471,10 +471,13 @@ func (r *RunningQueue) Encode() *EncodedRunningQueue {
 }
 
 // StartedTask adds the task to the queue and sets its timeout accordingly.
-func (r *RunningQueue) StartedTask(t *Task) {
+func (r *RunningQueue) StartedTask(t *Task, timeout *time.Duration) {
 	r.idToTask[t.ID] = t
-	r.deque.PushLast(t)
-	t.expiration = time.Now().Add(r.timeout)
+	if timeout == nil {
+		timeout = &r.timeout
+	}
+	t.expiration = time.Now().Add(*timeout)
+	r.deque.PushByExpiration(t)
 }
 
 // PopExpired removes the first timed out task from the queue and returns it.
@@ -538,13 +541,13 @@ func (r *RunningQueue) Completed(id string) *Task {
 // Keepalive restarts the timeout period for the identified task.
 //
 // Returns true if the task was found, or false otherwise.
-func (r *RunningQueue) Keepalive(id string) bool {
+func (r *RunningQueue) Keepalive(id string, timeout *time.Duration) bool {
 	task, ok := r.idToTask[id]
 	if !ok {
 		return false
 	}
 	r.deque.Remove(task)
-	r.StartedTask(task)
+	r.StartedTask(task, timeout)
 	return true
 }
 

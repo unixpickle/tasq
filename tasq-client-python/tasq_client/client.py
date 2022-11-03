@@ -45,6 +45,10 @@ class TasqClient:
                         between attempts to pop a task in pop_running_task().
                         Lower values mean waiting less long in the case that
                         a new task is pushed or all tasks are finished.
+    :param task_timeout: if specified, override the timeout on the server with
+                         a custom timeout. This can be useful if we know we
+                         will be sending frequent keepalives, but the server
+                         has a longer timeout period.
     """
 
     def __init__(
@@ -55,6 +59,7 @@ class TasqClient:
         username: Optional[str] = None,
         password: Optional[str] = None,
         max_timeout: float = 30.0,
+        task_timeout: Optional[float] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
@@ -62,6 +67,7 @@ class TasqClient:
         self.username = username
         self.password = password
         self.max_timeout = max_timeout
+        self.task_timeout = task_timeout
         self.session = requests.Session()
         if username is not None or password is not None:
             assert username is not None and password is not None
@@ -91,6 +97,7 @@ class TasqClient:
                 OptionalKey("retry"): float,
                 OptionalKey("done"): bool,
             },
+            supports_timeout=True,
         )
         if "id" in result and "contents" in result:
             return Task(id=result["id"], contents=result["contents"]), None
@@ -121,6 +128,7 @@ class TasqClient:
                 "tasks": [dict(id=str, contents=str)],
                 OptionalKey("retry"): float,
             },
+            supports_timeout=True,
         )
 
         if response["done"]:
@@ -147,7 +155,7 @@ class TasqClient:
 
     def keepalive(self, id: str):
         """Reset the timeout interval for a still in-progress task."""
-        self._post_form("/task/keepalive", dict(id=id))
+        self._post_form("/task/keepalive", dict(id=id), supports_timeout=True)
 
     @contextmanager
     def pop_running_task(self) -> Optional["RunningTask"]:
@@ -191,23 +199,40 @@ class TasqClient:
         )
         return QueueCounts(**data)
 
-    def _get(self, path: str, type_template: Optional[Any] = None) -> Any:
-        return _process_response(self.session.get(self._url_for_path(path)), type_template)
-
-    def _post_form(
-        self, path: str, args: Dict[str, str], type_template: Optional[Any] = None
+    def _get(
+        self, path: str, type_template: Optional[Any] = None, supports_timeout: bool = False
     ) -> Any:
         return _process_response(
-            self.session.post(self._url_for_path(path), data=args), type_template
+            self.session.get(self._url_for_path(path, supports_timeout)), type_template
         )
 
-    def _post_json(self, path: str, data: Any, type_template: Optional[Any] = None) -> Any:
+    def _post_form(
+        self,
+        path: str,
+        args: Dict[str, str],
+        type_template: Optional[Any] = None,
+        supports_timeout: bool = False,
+    ) -> Any:
         return _process_response(
-            self.session.post(self._url_for_path(path), json=data), type_template
+            self.session.post(self._url_for_path(path, supports_timeout), data=args), type_template
         )
 
-    def _url_for_path(self, path: str) -> str:
-        return self.base_url + path + "?context=" + urllib.parse.quote(self.context)
+    def _post_json(
+        self,
+        path: str,
+        data: Any,
+        type_template: Optional[Any] = None,
+        supports_timeout: bool = False,
+    ) -> Any:
+        return _process_response(
+            self.session.post(self._url_for_path(path, supports_timeout), json=data), type_template
+        )
+
+    def _url_for_path(self, path: str, supports_timeout: bool) -> str:
+        result = self.base_url + path + "?context=" + urllib.parse.quote(self.context)
+        if supports_timeout and self.task_timeout is not None:
+            result += "&timeout=" + urllib.parse.quote(f"{self.task_timeout:f}")
+        return result
 
 
 @dataclass
