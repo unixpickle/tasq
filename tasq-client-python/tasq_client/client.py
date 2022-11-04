@@ -253,6 +253,7 @@ class RunningTask(Task):
                 client.context,
                 client.username,
                 client.password,
+                client.task_timeout,
                 client.keepalive_interval,
                 self.id,
             ),
@@ -277,10 +278,17 @@ class RunningTask(Task):
         context: str,
         username: Optional[str],
         password: Optional[str],
+        task_timeout: Optional[float],
         interval: float,
         task_id: str,
     ):
-        client = TasqClient(base_url, context=context, username=username, password=password)
+        client = TasqClient(
+            base_url,
+            context=context,
+            username=username,
+            password=password,
+            task_timeout=task_timeout,
+        )
         while True:
             try:
                 client.keepalive(task_id)
