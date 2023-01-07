@@ -199,6 +199,19 @@ class TasqClient:
         )
         return QueueCounts(**data)
 
+    def __getstate__(
+        self,
+    ):
+        res = self.__dict__.copy()
+        del res["session"]
+        return res
+
+    def __setstate__(self, state: Dict[str, Any]):
+        self.__dict__ = state
+        self.session = requests.Session()
+        if self.username is not None:
+            self.session.auth = (self.username, self.password)
+
     def _get(
         self, path: str, type_template: Optional[Any] = None, supports_timeout: bool = False
     ) -> Any:
@@ -249,12 +262,7 @@ class RunningTask(Task):
             target=RunningTask._keepalive_worker,
             name="tasq-keepalive-worker",
             args=(
-                client.base_url,
-                client.context,
-                client.username,
-                client.password,
-                client.task_timeout,
-                client.keepalive_interval,
+                client,
                 self.id,
             ),
             daemon=True,
@@ -274,27 +282,15 @@ class RunningTask(Task):
 
     @staticmethod
     def _keepalive_worker(
-        base_url: str,
-        context: str,
-        username: Optional[str],
-        password: Optional[str],
-        task_timeout: Optional[float],
-        interval: float,
+        client: TasqClient,
         task_id: str,
     ):
-        client = TasqClient(
-            base_url,
-            context=context,
-            username=username,
-            password=password,
-            task_timeout=task_timeout,
-        )
         while True:
             try:
                 client.keepalive(task_id)
             except Exception as exc:  # pylint: disable=broad-except
                 print(f"exception in tasq keepalive worker: {exc}", file=sys.stderr)
-            time.sleep(interval)
+            time.sleep(client.keepalive_interval)
 
 
 class TasqRemoteError(Exception):
