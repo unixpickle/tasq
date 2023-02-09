@@ -23,7 +23,8 @@ while True:
   with client.pop_running_task() as task:
     if task is None:
       break
-    assert task.contents['key'] == 'value'
+    d = json.loads(task.contents)
+    assert d['key'] == 'value'
 ```
 
 ## Troubleshooting
