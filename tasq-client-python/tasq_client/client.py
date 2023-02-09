@@ -1,9 +1,10 @@
+import multiprocessing
 import sys
 import time
 import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
-from multiprocessing import Process
+from multiprocessing.context import BaseContext
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -69,6 +70,7 @@ class TasqClient:
         self.max_timeout = max_timeout
         self.task_timeout = task_timeout
         self.session = requests.Session()
+        self.mp_context = multiprocessing.get_context("spawn")
         if username is not None or password is not None:
             assert username is not None and password is not None
             self.session.auth = (username, password)
@@ -173,7 +175,9 @@ class TasqClient:
         while True:
             task, timeout = self.pop()
             if task is not None:
-                rt = RunningTask(self, id=task.id, contents=task.contents)
+                rt = RunningTask(
+                    self, id=task.id, contents=task.contents, mp_context=self.mp_context
+                )
                 try:
                     yield rt
                     rt.completed()
@@ -255,10 +259,12 @@ class RunningTask(Task):
     cancel() or completed() is called.
     """
 
-    def __init__(self, client: TasqClient, *args, **kwargs):
+    def __init__(
+        self, client: TasqClient, *args, mp_context: Optional[BaseContext] = None, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.client = client
-        self._proc = Process(
+        self._proc = (mp_context or multiprocessing).Process(
             target=RunningTask._keepalive_worker,
             name="tasq-keepalive-worker",
             args=(
