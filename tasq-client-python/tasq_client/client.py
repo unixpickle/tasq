@@ -8,6 +8,7 @@ from multiprocessing.context import BaseContext
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter, Retry
 
 from .check_type import CheckTypeException, OptionalKey, check_type
 
@@ -50,6 +51,8 @@ class TasqClient:
                          a custom timeout. This can be useful if we know we
                          will be sending frequent keepalives, but the server
                          has a longer timeout period.
+    :param retry_server_errors: if True, retry requests if the server returns
+                                certain 5xx status codes.
     """
 
     def __init__(
@@ -61,6 +64,7 @@ class TasqClient:
         password: Optional[str] = None,
         max_timeout: float = 30.0,
         task_timeout: Optional[float] = None,
+        retry_server_errors: bool = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
@@ -69,11 +73,10 @@ class TasqClient:
         self.password = password
         self.max_timeout = max_timeout
         self.task_timeout = task_timeout
+        self.retry_server_errors = retry_server_errors
         self.session = requests.Session()
+        self._configure_session()
         self.mp_context = multiprocessing.get_context("spawn")
-        if username is not None or password is not None:
-            assert username is not None and password is not None
-            self.session.auth = (username, password)
 
     def push(self, contents: str) -> str:
         """Push a task and get its resulting ID."""
@@ -213,8 +216,16 @@ class TasqClient:
     def __setstate__(self, state: Dict[str, Any]):
         self.__dict__ = state
         self.session = requests.Session()
-        if self.username is not None:
+        self._configure_session()
+
+    def _configure_session(self):
+        if self.username is not None or self.password is not None:
+            assert self.username is not None and self.password is not None
             self.session.auth = (self.username, self.password)
+        if self.retry_server_errors:
+            retries = Retry(total=10, backoff_factor=1.0, status_forcelist=[500, 502, 503, 504])
+            for schema in ("http://", "https://"):
+                self.session.mount(schema, HTTPAdapter(max_retries=retries))
 
     def _get(
         self, path: str, type_template: Optional[Any] = None, supports_timeout: bool = False
