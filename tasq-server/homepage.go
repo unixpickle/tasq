@@ -323,7 +323,9 @@ const Homepage = `<!doctype html>
 		}
 
 		function deleteContext(name) {
-			reloadCounts(() => fetch('/task/clear?context=' + encodeURIComponent(name)));
+			if (confirm('Really delete queue with name: "' + name + '"?')) {
+				reloadCounts(() => fetch('/task/clear?context=' + encodeURIComponent(name)));				
+			}
 		}
 
 		function expireAll(name) {
