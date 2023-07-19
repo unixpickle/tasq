@@ -223,7 +223,12 @@ class TasqClient:
             assert self.username is not None and self.password is not None
             self.session.auth = (self.username, self.password)
         if self.retry_server_errors:
-            retries = Retry(total=10, backoff_factor=1.0, status_forcelist=[500, 502, 503, 504])
+            retries = Retry(
+                total=10,
+                backoff_factor=1.0,
+                status_forcelist=[500, 502, 503, 504],
+                allowed_methods=False,
+            )
             for schema in ("http://", "https://"):
                 self.session.mount(schema, HTTPAdapter(max_retries=retries))
 
