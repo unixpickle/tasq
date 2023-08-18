@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/unixpickle/essentials"
 )
 
 // QueueStateMux manages multiple (named) QueueStates.
@@ -182,13 +183,15 @@ type QueueState struct {
 	running *RunningQueue
 
 	completionCounter int64
+	rateTracker       *RateTracker
 }
 
 // NewQueueState creates empty queues with the given task timeout.
 func NewQueueState(timeout time.Duration) *QueueState {
 	return &QueueState{
-		pending: NewPendingQueue(),
-		running: NewRunningQueue(timeout),
+		pending:     NewPendingQueue(),
+		running:     NewRunningQueue(timeout),
+		rateTracker: NewRateTracker(0),
 	}
 }
 
@@ -198,6 +201,7 @@ func DecodeQueueState(obj *EncodedQueueState) *QueueState {
 		pending:           DecodePendingQueue(obj.Pending),
 		running:           DecodeRunningQueue(obj.Running),
 		completionCounter: obj.Completed,
+		rateTracker:       DecodeRateTracker(obj.RateTracker),
 	}
 }
 
@@ -206,9 +210,10 @@ func (q *QueueState) Encode() *EncodedQueueState {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	return &EncodedQueueState{
-		Pending:   q.pending.Encode(),
-		Running:   q.running.Encode(),
-		Completed: q.completionCounter,
+		Pending:     q.pending.Encode(),
+		Running:     q.running.Encode(),
+		Completed:   q.completionCounter,
+		RateTracker: q.rateTracker.Encode(),
 	}
 }
 
@@ -295,6 +300,7 @@ func (q *QueueState) Completed(id string) bool {
 	res := q.running.Completed(id) != nil
 	if res {
 		q.completionCounter += 1
+		q.rateTracker.Add(1)
 	}
 	return res
 }
@@ -308,16 +314,23 @@ func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 }
 
 // Counts gets the current number of tasks in each state.
-func (q *QueueState) Counts() *QueueCounts {
+func (q *QueueState) Counts(rateSeconds int) *QueueCounts {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	runningTotal := q.running.Len()
 	runningExpired := q.running.NumExpired()
+	var rate *float64
+	if rateSeconds > 0 {
+		rateSeconds = essentials.MinInt(rateSeconds, q.rateTracker.HistorySize())
+		r := float64(q.rateTracker.Count(rateSeconds)) / float64(rateSeconds)
+		rate = &r
+	}
 	return &QueueCounts{
 		Pending:   int64(q.pending.Len()),
 		Running:   int64(runningTotal - runningExpired),
 		Expired:   int64(runningExpired),
 		Completed: q.completionCounter,
+		Rate:      rate,
 	}
 }
 
@@ -328,6 +341,7 @@ func (q *QueueState) Clear() {
 	q.pending.Clear()
 	q.running.Clear()
 	q.completionCounter = 0
+	q.rateTracker.Reset()
 }
 
 // Cleared returns true if the queue is effectively a fresh object, containing
@@ -585,16 +599,18 @@ func (r *RunningQueue) Clear() {
 }
 
 type QueueCounts struct {
-	Pending   int64 `json:"pending"`
-	Running   int64 `json:"running"`
-	Expired   int64 `json:"expired"`
-	Completed int64 `json:"completed"`
+	Pending   int64    `json:"pending"`
+	Running   int64    `json:"running"`
+	Expired   int64    `json:"expired"`
+	Completed int64    `json:"completed"`
+	Rate      *float64 `json:"rate,omitempty"`
 }
 
 type EncodedQueueState struct {
-	Pending   *EncodedPendingQueue
-	Running   *EncodedRunningQueue
-	Completed int64
+	Pending     *EncodedPendingQueue
+	Running     *EncodedRunningQueue
+	Completed   int64
+	RateTracker *EncodedRateTracker
 }
 
 type EncodedPendingQueue struct {

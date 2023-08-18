@@ -30,6 +30,10 @@ class QueueCounts:
     expired: int
     completed: int
 
+    # Won't be set if a time window wasn't specified in the request, or if the
+    # server is old enough to not support rate estimation.
+    rate: Optional[float] = None
+
 
 class TasqClient:
     """
@@ -193,16 +197,17 @@ class TasqClient:
                 yield None
                 return
 
-    def counts(self) -> QueueCounts:
+    def counts(self, rate_window: int = 0) -> QueueCounts:
         """Get the number of tasks in each state within the queue."""
         data = self._get(
-            "/counts",
-            dict(
-                pending=int,
-                running=int,
-                expired=int,
-                completed=int,
-            ),
+            f"/counts?window={rate_window}",
+            {
+                "pending": int,
+                "running": int,
+                "expired": int,
+                "completed": int,
+                OptionalKey("minute_rate"): float,
+            },
         )
         return QueueCounts(**data)
 
@@ -262,7 +267,8 @@ class TasqClient:
         )
 
     def _url_for_path(self, path: str, supports_timeout: bool) -> str:
-        result = self.base_url + path + "?context=" + urllib.parse.quote(self.context)
+        separator = "?" if "?" not in path else "&"
+        result = self.base_url + path + separator + "context=" + urllib.parse.quote(self.context)
         if supports_timeout and self.task_timeout is not None:
             result += "&timeout=" + urllib.parse.quote(f"{self.task_timeout:f}")
         return result

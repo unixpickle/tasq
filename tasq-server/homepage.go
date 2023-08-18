@@ -238,7 +238,7 @@ const Homepage = `<!doctype html>
 				if (actionFn) {
 					await actionFn();
 				}
-				result = await (await fetch('/counts?all=1')).json();
+				result = await (await fetch('/counts?all=1&window=60')).json();
 			} catch (e) {
 				errorBox.textContent = '' + e;
 				errorBox.classList.remove('hidden');
@@ -278,6 +278,7 @@ const Homepage = `<!doctype html>
 				['running', 'In progress'],
 				['expired', 'Expired'],
 				['completed', 'Completed'],
+				['rate', 'Tasks/sec'],
 			];
 			const fieldTable = document.createElement('table');
 			fieldTable.className = 'counts-item-table';
@@ -289,7 +290,11 @@ const Homepage = `<!doctype html>
 				labelCol.className = 'counts-item-field-name';
 				labelCol.textContent = caption + ':';
 				const dataCol = document.createElement('td');
-				dataCol.textContent = '' + counts[fieldId];
+				if (fieldId === 'rate') {
+					dataCol.textContent = counts[fieldId].toFixed(3);
+				} else {
+					dataCol.textContent = '' + counts[fieldId];
+				}
 				row.appendChild(labelCol);
 				row.appendChild(dataCol);
 				tableBody.appendChild(row);
