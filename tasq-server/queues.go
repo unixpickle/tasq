@@ -16,10 +16,11 @@ import (
 
 // QueueStateMux manages multiple (named) QueueStates.
 type QueueStateMux struct {
-	lock    sync.Mutex
-	queues  map[string]*QueueState
-	users   map[string]int
-	timeout time.Duration
+	saveLock sync.RWMutex
+	lock     sync.Mutex
+	queues   map[string]*QueueState
+	users    map[string]int
+	timeout  time.Duration
 }
 
 // NewQueueStateMux creates a QueueStateMux with the given task timeout.
@@ -85,6 +86,9 @@ func ReadQueueStateMux(timeout time.Duration, path string) (*QueueStateMux, erro
 // The QueueState should not be accessed outside of f. In particular, f should
 // not store a reference to the QueueState anywhere outside of its scope.
 func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
+	q.saveLock.RLock()
+	defer q.saveLock.RUnlock()
+
 	q.lock.Lock()
 	qs, ok := q.queues[name]
 	if !ok {
@@ -110,6 +114,9 @@ func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
 
 // Iterate calls f with every non-empty QueueState in q.
 func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
+	q.saveLock.RLock()
+	defer q.saveLock.RUnlock()
+
 	q.lock.Lock()
 	names := make([]string, 0, len(q.queues))
 	for name := range q.queues {
@@ -124,38 +131,31 @@ func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
 	}
 }
 
-// Serialize writes the contents of the queue to a file.
+// Serialize writes the contents of the queue to a file, blocking all
+// operations on all queues to make sure cross-queue consistent state.
 func (q *QueueStateMux) Serialize(w io.Writer) error {
+	// Allow no other concurrent use of the queue.
+	q.saveLock.Lock()
+	defer q.saveLock.Unlock()
+
 	const context = "serialize queue state"
 
-	q.lock.Lock()
-	names := make([]string, 0, len(q.queues))
-	for name := range q.queues {
-		names = append(names, name)
-	}
-	q.lock.Unlock()
-
 	resultWriter := zip.NewWriter(w)
-	for i, name := range names {
-		var writeError error
-		q.Get(name, func(q *QueueState) {
-			rw, err := resultWriter.Create(strconv.Itoa(i) + ".json")
-			if err != nil {
-				writeError = err
-				return
-			}
-			var dictObj struct {
-				Name    string
-				Encoded *EncodedQueueState
-			}
-			dictObj.Name = name
-			dictObj.Encoded = q.Encode()
-			if err := json.NewEncoder(rw).Encode(dictObj); err != nil {
-				writeError = err
-			}
-		})
-		if writeError != nil {
-			return errors.Wrap(writeError, context)
+	i := 0
+	for name, q := range q.queues {
+		rw, err := resultWriter.Create(strconv.Itoa(i) + ".json")
+		i++
+		if err != nil {
+			return errors.Wrap(err, context)
+		}
+		var dictObj struct {
+			Name    string
+			Encoded *EncodedQueueState
+		}
+		dictObj.Name = name
+		dictObj.Encoded = q.Encode()
+		if err := json.NewEncoder(rw).Encode(dictObj); err != nil {
+			return errors.Wrap(err, context)
 		}
 	}
 
