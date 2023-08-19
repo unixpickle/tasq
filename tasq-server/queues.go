@@ -47,10 +47,7 @@ func DeserializeQueueStateMux(timeout time.Duration, r io.ReaderAt,
 		if err != nil {
 			return nil, errors.Wrap(err, context)
 		}
-		var dictObj struct {
-			Name    string
-			Encoded *EncodedQueueState
-		}
+		var dictObj ContextState
 		err = json.NewDecoder(subReader).Decode(&dictObj)
 		subReader.Close()
 		if err != nil {
@@ -134,27 +131,25 @@ func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
 // Serialize writes the contents of the queue to a file, blocking all
 // operations on all queues to make sure cross-queue consistent state.
 func (q *QueueStateMux) Serialize(w io.Writer) error {
-	// Allow no other concurrent use of the queue.
 	q.saveLock.Lock()
-	defer q.saveLock.Unlock()
+	var states []ContextState
+	for name, q := range q.queues {
+		states = append(states, ContextState{
+			Name:    name,
+			Encoded: q.Encode(),
+		})
+	}
+	q.saveLock.Unlock()
 
 	const context = "serialize queue state"
 
 	resultWriter := zip.NewWriter(w)
-	i := 0
-	for name, q := range q.queues {
+	for i, state := range states {
 		rw, err := resultWriter.Create(strconv.Itoa(i) + ".json")
-		i++
 		if err != nil {
 			return errors.Wrap(err, context)
 		}
-		var dictObj struct {
-			Name    string
-			Encoded *EncodedQueueState
-		}
-		dictObj.Name = name
-		dictObj.Encoded = q.Encode()
-		if err := json.NewEncoder(rw).Encode(dictObj); err != nil {
+		if err := json.NewEncoder(rw).Encode(state); err != nil {
 			return errors.Wrap(err, context)
 		}
 	}
@@ -604,6 +599,11 @@ type QueueCounts struct {
 	Expired   int64    `json:"expired"`
 	Completed int64    `json:"completed"`
 	Rate      *float64 `json:"rate,omitempty"`
+}
+
+type ContextState struct {
+	Name    string
+	Encoded *EncodedQueueState
 }
 
 type EncodedQueueState struct {
