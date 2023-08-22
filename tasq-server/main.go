@@ -171,6 +171,7 @@ func (s *Server) ServeStats(w http.ResponseWriter, r *http.Request) {
 	s.SaveStatsLock.RUnlock()
 
 	serveObject(w, map[string]interface{}{
+		"uptime": time.Now().Sub(s.StartTime).Seconds(),
 		"memory": map[string]interface{}{
 			"alloc":      m.Alloc,
 			"totalAlloc": m.TotalAlloc,

@@ -220,6 +220,10 @@ const Homepage = `<!doctype html>
 			<label class="stats-name">System stats</label>
 			<table class="stats-table">
 				<tr>
+					<td class="stats-field-name">Uptime:</td>
+					<td id="stats-field-uptime">-</td>
+				</tr>
+				<tr>
 					<td class="stats-field-name">Allocated:</td>
 					<td id="stats-field-allocated">-</td>
 				</tr>
@@ -296,6 +300,7 @@ const Homepage = `<!doctype html>
 			const response = await (await fetch('/stats')).json();
 			const stats = response['data'];
 			[
+				['stats-field-uptime', Math.round(stats.uptime) + ' seconds'],
 				['stats-field-allocated', stats.memory.alloc + ' bytes'],
 				['stats-field-total-allocated', stats.memory.totalAlloc + ' bytes'],
 				['stats-field-sys-allocated', stats.memory.sys + ' bytes'],
