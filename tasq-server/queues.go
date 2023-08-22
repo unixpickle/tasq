@@ -196,7 +196,7 @@ func DecodeQueueState(obj *EncodedQueueState) *QueueState {
 		pending:           DecodePendingQueue(obj.Pending),
 		running:           DecodeRunningQueue(obj.Running),
 		completionCounter: obj.Completed,
-		rateTracker:       DecodeRateTracker(obj.RateTracker),
+		rateTracker:       DecodeRateTracker(&obj.RateTracker),
 	}
 }
 
@@ -208,7 +208,7 @@ func (q *QueueState) Encode() *EncodedQueueState {
 		Pending:     q.pending.Encode(),
 		Running:     q.running.Encode(),
 		Completed:   q.completionCounter,
-		RateTracker: q.rateTracker.Encode(),
+		RateTracker: *q.rateTracker.Encode(),
 	}
 }
 
@@ -610,7 +610,7 @@ type EncodedQueueState struct {
 	Pending     *EncodedPendingQueue
 	Running     *EncodedRunningQueue
 	Completed   int64
-	RateTracker *EncodedRateTracker
+	RateTracker EncodedRateTracker
 }
 
 type EncodedPendingQueue struct {

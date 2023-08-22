@@ -31,7 +31,7 @@ func NewRateTracker(historySize int) *RateTracker {
 // If the state is empty, a new rate tracker with DefaultRateTrackerBins is
 // created.
 func DecodeRateTracker(state *EncodedRateTracker) *RateTracker {
-	if len(state.Bins) == 0 {
+	if state == nil {
 		return NewRateTracker(DefaultRateTrackerBins)
 	}
 	return &RateTracker{

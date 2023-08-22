@@ -68,7 +68,7 @@ const Homepage = `<!doctype html>
 				margin: 10px 0;
 			}
 
-			.counts-item-name {
+			.counts-item-name, .stats-name {
 				display: block;
 				border-bottom: 1px solid #d5d5d5;
 				font-weight: bolder;
@@ -80,17 +80,17 @@ const Homepage = `<!doctype html>
 				font-style: oblique;
 			}
 
-			.counts-item-table {
+			.counts-item-table, .stats-table {
 				text-align: left;
 				margin: auto;
 			}
 
-			.counts-item-table td.counts-item-field-name {
+			.counts-item-table td.counts-item-field-name, .stats-table td.stats-field-name {
 				text-align: right;
 				padding-right: 0.2em;
 			}
 
-			.counts-item-table td {
+			.counts-item-table td, .stats-table td {
 				padding-bottom: 0.1em;
 				padding-top: 0.1em;
 			}
@@ -216,6 +216,35 @@ const Homepage = `<!doctype html>
 			</div>
 			<input id="add-task-button" type="submit" value="Add task">
 		</form>
+		<li id="stats-box" class="width-sizing panel">
+			<label class="stats-name">System stats</label>
+			<table class="stats-table">
+				<tr>
+					<td class="stats-field-name">Allocated:</td>
+					<td id="stats-field-allocated">-</td>
+				</tr>
+				<tr>
+					<td class="stats-field-name">Total allocated:</td>
+					<td id="stats-field-total-allocated">-</td>
+				</tr>
+				<tr>
+					<td class="stats-field-name">System allocated:</td>
+					<td id="stats-field-sys-allocated">-</td>
+				</tr>
+				<tr>
+					<td class="stats-field-name">Last GC:</td>
+					<td id="stats-field-last-gc">-</td>
+				</tr>
+				<tr>
+					<td class="stats-field-name">Last save:</td>
+					<td id="stats-field-save-elapsed">-</td>
+				</tr>
+				<tr>
+					<td class="stats-field-name">Save latency:</td>
+					<td id="stats-field-save-latency">-</td>
+				</tr>
+			</table>
+		</li>
 		<div id="text-overlay-container" class="overlay-container overlay-container-hidden" onclick="closeTextOverlay()">
 			<div class="overlay-pane" onclick="event.stopPropagation()">
 				<textarea class="overlay-textbox"></textarea>
@@ -258,7 +287,25 @@ const Homepage = `<!doctype html>
 				});
 			}
 
+			await reloadStats();
+
 			return true;
+		}
+
+		async function reloadStats() {
+			const response = await (await fetch('/stats')).json();
+			const stats = response['data'];
+			[
+				['stats-field-allocated', stats.memory.alloc + ' bytes'],
+				['stats-field-total-allocated', stats.memory.totalAlloc + ' bytes'],
+				['stats-field-sys-allocated', stats.memory.sys + ' bytes'],
+				['stats-field-last-gc', stats.memory.lastGC.toFixed(2) + ' seconds ago'],
+				['stats-field-save-elapsed', stats.save.elapsed.toFixed(2) + ' seconds ago'],
+				['stats-field-save-latency', stats.save.latency.toFixed(3) + ' seconds'],
+			].forEach((pair) => {
+				const [fieldID, value] = pair;
+				document.getElementById(fieldID).textContent = value;
+			});
 		}
 
 		function addCountsToList(name, counts) {

@@ -11,8 +11,10 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/unixpickle/essentials"
@@ -45,11 +47,13 @@ func main() {
 		AuthPassword: authPassword,
 		SavePath:     savePath,
 		SaveInterval: saveInterval,
+		StartTime:    time.Now(),
 		Queues:       NewQueueStateMux(timeout),
 	}
 	http.HandleFunc(pathPrefix, s.ServeIndex)
 	http.HandleFunc(pathPrefix+"summary", s.ServeSummary)
 	http.HandleFunc(pathPrefix+"counts", s.ServeCounts)
+	http.HandleFunc(pathPrefix+"stats", s.ServeStats)
 	http.HandleFunc(pathPrefix+"task/push", s.ServePushTask)
 	http.HandleFunc(pathPrefix+"task/push_batch", s.ServePushBatch)
 	http.HandleFunc(pathPrefix+"task/pop", s.ServePopTask)
@@ -72,6 +76,12 @@ type Server struct {
 	Queues       *QueueStateMux
 	SavePath     string
 	SaveInterval time.Duration
+
+	StartTime time.Time
+
+	SaveStatsLock    sync.RWMutex
+	LastSave         time.Time
+	LastSaveDuration time.Duration
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +152,32 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		serveObject(w, qs.Counts(rateWindow))
+	})
+}
+
+func (s *Server) ServeStats(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	s.SaveStatsLock.RLock()
+	saveStats := map[string]interface{}{
+		"elapsed": (time.Now().Sub(s.LastSave).Seconds()),
+		"latency": s.LastSaveDuration.Seconds(),
+	}
+	s.SaveStatsLock.RUnlock()
+
+	serveObject(w, map[string]interface{}{
+		"memory": map[string]interface{}{
+			"alloc":      m.Alloc,
+			"totalAlloc": m.TotalAlloc,
+			"sys":        m.Sys,
+			"lastGC":     float64(time.Now().UnixNano()-int64(m.LastGC)) / 1000000000.0,
+		},
+		"save": saveStats,
 	})
 }
 
@@ -424,6 +460,7 @@ func (s *Server) SetupSaveLoop(timeout time.Duration) {
 		return
 	}
 	if _, err := os.Stat(s.SavePath); err == nil {
+		log.Printf("loading state from: %s", s.SavePath)
 		s.Queues, err = ReadQueueStateMux(timeout, s.SavePath)
 		if err != nil {
 			log.Fatal(err)
@@ -431,23 +468,33 @@ func (s *Server) SetupSaveLoop(timeout time.Duration) {
 			log.Printf("Loaded state from: %s", s.SavePath)
 		}
 	}
+	s.LastSave = time.Now()
+	s.LastSaveDuration = 0
 	go s.SaveLoop()
 }
 
 func (s *Server) SaveLoop() {
 	for {
 		time.Sleep(s.SaveInterval)
+		log.Printf("Saved state to: %s", s.SavePath)
 		tmpPath := s.SavePath + ".tmp"
 		w, err := os.Create(tmpPath)
 		if err != nil {
 			log.Fatal(err)
 		}
+		t1 := time.Now()
 		err = s.Queues.Serialize(w)
 		w.Close()
 		if err != nil {
 			log.Fatal(err)
 		}
 		os.Rename(tmpPath, s.SavePath)
+
+		s.SaveStatsLock.Lock()
+		s.LastSave = time.Now()
+		s.LastSaveDuration = s.LastSave.Sub(t1)
+		s.SaveStatsLock.Unlock()
+
 		log.Printf("Saved state to: %s", s.SavePath)
 	}
 }
