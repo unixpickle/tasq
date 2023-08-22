@@ -460,7 +460,7 @@ func (s *Server) SetupSaveLoop(timeout time.Duration) {
 		return
 	}
 	if _, err := os.Stat(s.SavePath); err == nil {
-		log.Printf("loading state from: %s", s.SavePath)
+		log.Printf("Loading state from: %s", s.SavePath)
 		s.Queues, err = ReadQueueStateMux(timeout, s.SavePath)
 		if err != nil {
 			log.Fatal(err)
@@ -476,7 +476,7 @@ func (s *Server) SetupSaveLoop(timeout time.Duration) {
 func (s *Server) SaveLoop() {
 	for {
 		time.Sleep(s.SaveInterval)
-		log.Printf("Saved state to: %s", s.SavePath)
+		log.Printf("Saving state to: %s", s.SavePath)
 		tmpPath := s.SavePath + ".tmp"
 		w, err := os.Create(tmpPath)
 		if err != nil {
