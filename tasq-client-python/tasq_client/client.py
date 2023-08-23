@@ -1,4 +1,5 @@
 import multiprocessing
+import random
 import sys
 import time
 import urllib.parse
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
-from .check_type import CheckTypeException, OptionalKey, check_type
+from .check_type import CheckTypeException, OptionalKey, OptionalValue, check_type
 
 
 @dataclass
@@ -48,9 +49,10 @@ class TasqClient:
     :param username: optional username for basic authentication.
     :param password: optional password for basic authentication.
     :param max_timeout: the maximum amount of time (in seconds) to wait
-                        between attempts to pop a task in pop_running_task().
-                        Lower values mean waiting less long in the case that
-                        a new task is pushed or all tasks are finished.
+                        between attempts to pop a task in pop_running_task(),
+                        or push a task in push_blocking().
+                        Lower values mean waiting less long to pop in the case
+                        that a new task is pushed or all tasks are finished.
     :param task_timeout: if specified, override the timeout on the server with
                          a custom timeout. This can be useful if we know we
                          will be sending frequent keepalives, but the server
@@ -82,13 +84,69 @@ class TasqClient:
         self._configure_session()
         self.mp_context = multiprocessing.get_context("spawn")
 
-    def push(self, contents: str) -> str:
-        """Push a task and get its resulting ID."""
-        return self._post_form("/task/push", dict(contents=contents), type_template=str)
+    def push(self, contents: str, limit: int = 0) -> Optional[str]:
+        """
+        Push a task and get its resulting ID.
 
-    def push_batch(self, ids: List[str]) -> List[str]:
-        """Push a batch of tasks and get their resulting IDs."""
-        return self._post_json("/task/push_batch", ids, type_template=[str])
+        If limit is specified, then the task will not be pushed if the queue is
+        full, in which case None is returned.
+        """
+        return self._post_form(
+            f"/task/push", dict(contents=contents, limit=limit), type_template=OptionalValue(str)
+        )
+
+    def push_batch(self, ids: List[str], limit: int = 0) -> Optional[List[str]]:
+        """
+        Push a batch of tasks and get their resulting IDs.
+
+        If limit is specified, then tasks will not be pushed if the queue does
+        not have room for all the tasks at once, in which case None is
+        returned.
+
+        If limit is negative, then (-limit + batch_size) is used as the limit.
+        This effectively limits the size of the queue before a push rather than
+        after the push, to prevent large batches from being less likely to be
+        pushed than larger batches.
+        """
+        if limit < 0:
+            limit = -limit + len(ids)
+        return self._post_json(
+            f"/task/push_batch?limit={limit}", ids, type_template=OptionalValue([str])
+        )
+
+    def push_blocking(
+        self, contents: List[str], limit: int, init_wait_time: float = 1.0
+    ) -> List[str]:
+        """
+        Push one or more tasks atomically and block until they are pushed.
+
+        If the queue cannot fit the batch, this will wait to retry with random
+        exponential backoff. Backoff is randomized to mitigate starvation.
+
+        See push_batch() for details on passing a negative limit to avoid
+        starvation of larger batches when pushing from multiple processes.
+
+        Unlike push_batch(), the ids returned by this method will never be
+        None, since all tasks must be pushed.
+        """
+        assert isinstance(
+            contents, (list, tuple)
+        ), f"expected a list of task contents, got object of type {type(contents)}"
+        assert (
+            init_wait_time <= self.max_timeout
+        ), f"wait time {init_wait_time=} should not be larger than {self.max_timeout=}"
+        assert limit < 0 or limit >= len(contents)
+
+        cur_wait = init_wait_time
+        while True:
+            ids = self.push_batch(contents, limit=limit)
+            if ids is not None:
+                return ids
+            timeout = cur_wait * random.random()
+            time.sleep(timeout)
+            # Use summation instead of doubling to prevent really rapid
+            # growth of cur_wait with low probability.
+            cur_wait = min(cur_wait + timeout, self.max_timeout)
 
     def pop(self) -> Tuple[Optional[Task], Optional[float]]:
         """

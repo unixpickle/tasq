@@ -12,6 +12,11 @@ class OptionalKey:
     key: str
 
 
+@dataclass
+class OptionalValue:
+    template: Any
+
+
 class CheckTypeException(Exception):
     """
     An error indicating that the type of an object does not match the expected
@@ -60,6 +65,9 @@ def check_type(template: Any, obj: Any):
             raise CheckTypeException(
                 f"expected type {template} to be float or int but got {type(obj)}"
             )
+    elif isinstance(template, OptionalValue):
+        if obj is not None:
+            _wrap_check("optional value", lambda: check_type(template.template, obj))
     else:
         if not isinstance(obj, template):
             raise CheckTypeException(f"expected type {template} but got {type(obj)}")

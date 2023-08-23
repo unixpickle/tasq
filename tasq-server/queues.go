@@ -213,10 +213,33 @@ func (q *QueueState) Encode() *EncodedQueueState {
 }
 
 // Push creates a task and returns the its new ID.
-func (q *QueueState) Push(contents string) string {
+//
+// If the specified maxSize is greater than 0, then the item will not be pushed
+// and false will be returned if the queue contains at least maxSize tasks.
+func (q *QueueState) Push(contents string, maxSize int) (string, bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	return q.pending.AddTask(contents).ID
+	if maxSize > 0 && q.pending.Len()+q.running.Len() >= maxSize {
+		return "", false
+	}
+	return q.pending.AddTask(contents).ID, true
+}
+
+// PushBatch is like Push, except that it pushes multiple tasks at once.
+//
+// Either all or no tasks will be pushed depending on the maxSize and current
+// queue size.
+func (q *QueueState) PushBatch(contents []string, maxSize int) ([]string, bool) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	if maxSize > 0 && q.pending.Len()+q.running.Len()+len(contents) > maxSize {
+		return nil, false
+	}
+	ids := make([]string, len(contents))
+	for i, x := range contents {
+		ids[i] = q.pending.AddTask(x).ID
+	}
+	return ids, true
 }
 
 // Pop gets a task from the queue, preferring the pending queue and dipping

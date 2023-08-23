@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math"
@@ -187,11 +188,20 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	contents := r.FormValue("contents")
+	limit, err := parseLimit(r.FormValue("limit"))
+	if err != nil {
+		serveError(w, err.Error())
+		return
+	}
 	if contents == "" {
 		serveError(w, "must specify non-empty `contents` parameter")
 	} else {
 		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-			serveObject(w, qs.Push(contents))
+			if id, ok := qs.Push(contents, limit); ok {
+				serveObject(w, id)
+			} else {
+				serveObject(w, nil)
+			}
 		})
 	}
 }
@@ -200,7 +210,7 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return
 	}
@@ -208,11 +218,14 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(data, &contents); err != nil {
 		serveError(w, err.Error())
 	} else {
-		ids := []string{}
+		limit, err := parseLimit(r.URL.Query().Get("limit"))
+		if err != nil {
+			serveError(w, err.Error())
+			return
+		}
+		var ids []string
 		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-			for _, c := range contents {
-				ids = append(ids, qs.Push(c))
-			}
+			ids, _ = qs.PushBatch(contents, limit)
 		})
 		serveObject(w, ids)
 	}
@@ -498,6 +511,17 @@ func (s *Server) SaveLoop() {
 
 		log.Printf("Saved state to: %s", s.SavePath)
 	}
+}
+
+func parseLimit(limit string) (int, error) {
+	if limit == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(limit)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 func serveObject(w http.ResponseWriter, obj interface{}) {
