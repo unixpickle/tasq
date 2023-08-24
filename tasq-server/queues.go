@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"encoding/json"
 	"io"
 	"os"
@@ -149,7 +150,11 @@ func (q *QueueStateMux) Serialize(w io.Writer) error {
 		if err != nil {
 			return errors.Wrap(err, context)
 		}
-		if err := json.NewEncoder(rw).Encode(state); err != nil {
+		bufWriter := bufio.NewWriter(rw)
+		if err := state.WriteJSON(bufWriter); err != nil {
+			return errors.Wrap(err, context)
+		}
+		if err := bufWriter.Flush(); err != nil {
 			return errors.Wrap(err, context)
 		}
 	}
@@ -629,6 +634,13 @@ type ContextState struct {
 	Encoded *EncodedQueueState
 }
 
+func (c *ContextState) WriteJSON(w io.Writer) error {
+	return WriteJSONObject(w, map[string]interface{}{
+		"Name":    c.Name,
+		"Encoded": c.Encoded,
+	})
+}
+
 type EncodedQueueState struct {
 	Pending     *EncodedPendingQueue
 	Running     *EncodedRunningQueue
@@ -636,12 +648,35 @@ type EncodedQueueState struct {
 	RateTracker *EncodedRateTracker
 }
 
+func (e *EncodedQueueState) WriteJSON(w io.Writer) error {
+	return WriteJSONObject(w, map[string]interface{}{
+		"Pending":     e.Pending,
+		"Running":     e.Running,
+		"Completed":   e.Completed,
+		"RateTracker": e.RateTracker,
+	})
+}
+
 type EncodedPendingQueue struct {
 	Deque []EncodedTask
 	CurID int64
 }
 
+func (e *EncodedPendingQueue) WriteJSON(w io.Writer) error {
+	return WriteJSONObject(w, map[string]interface{}{
+		"Deque": EncodedTaskList(e.Deque),
+		"CurID": e.CurID,
+	})
+}
+
 type EncodedRunningQueue struct {
 	Deque   []EncodedTask
 	Timeout time.Duration
+}
+
+func (e *EncodedRunningQueue) WriteJSON(w io.Writer) error {
+	return WriteJSONObject(w, map[string]interface{}{
+		"Deque":   EncodedTaskList(e.Deque),
+		"Timeout": e.Timeout,
+	})
 }
