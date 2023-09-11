@@ -29,6 +29,7 @@ const Homepage = `<!doctype html>
 
 			.panel {
 				display: block;
+				position: relative;
 				box-sizing: border-box;
 				background-color: white;
 				border: 1px solid #d5d5d5;
@@ -76,8 +77,40 @@ const Homepage = `<!doctype html>
 				padding-bottom: 2px;
 			}
 
+			.counts-item.collapsed .counts-item-name {
+				border: none;
+				margin-bottom: 0;
+			}
+
+			.counts-item.collapsed .counts-item-table,
+			.counts-item.collapsed .counts-item-actions {
+				display: none;
+			}
+
 			.counts-item-name-default {
 				font-style: oblique;
+			}
+
+			.counts-item-collapser {
+				position: absolute;
+				left: 5px;
+				top: 5px;
+				padding: 5px 10px;
+				margin: 0;
+				border: none;
+				background: transparent;
+				font-size: 1em;
+				color: #555;
+				cursor: pointer;
+				font-family: monospace;
+			}
+
+			.counts-item-collapser::after {
+				content: '▼';
+			}
+
+			.counts-item.collapsed > .counts-item-collapser::after {
+				content: '▶';
 			}
 
 			.counts-item-table, .stats-table {
@@ -284,11 +317,20 @@ const Homepage = `<!doctype html>
 			const counts = result['data']['counts'];
 			if (counts.length === 0) {
 				emptyBox.classList.remove('hidden');
+				delete localStorage['collapsed'];
 			} else {
+				const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
+				const allNames = [];
 				counts.forEach((counts, i) => {
 					const name = result['data']['names'][i];
-					addCountsToList(name, counts);
+					allNames.push(name);
+					addCountsToList(name, counts, collapsed.includes(name));
 				});
+				// Don't endlessly cache collapsed data about
+				// tasks that no longer exist.
+				localStorage['collapsed'] = JSON.stringify(
+					collapsed.filter((x) => allNames.includes(x)),
+				);
 			}
 
 			await reloadStats();
@@ -313,9 +355,17 @@ const Homepage = `<!doctype html>
 			});
 		}
 
-		function addCountsToList(name, counts) {
+		function addCountsToList(name, counts, collapsed) {
 			const elem = document.createElement('li');
 			elem.className = 'counts-item panel';
+			if (collapsed) {
+				elem.classList.add('collapsed');
+			}
+
+			const collapser = document.createElement('button');
+			collapser.className = 'counts-item-collapser';
+			collapser.addEventListener('click', () => toggleCollapse(elem, name));
+			elem.appendChild(collapser);
 
 			const nameLabel = document.createElement('label');
 			nameLabel.className = 'counts-item-name';
@@ -377,6 +427,19 @@ const Homepage = `<!doctype html>
 			elem.appendChild(actions);
 
 			countsList.appendChild(elem);
+		}
+
+		function toggleCollapse(elem, name) {
+			const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
+			const idx = collapsed.indexOf(name);
+			if (idx < 0) {
+				collapsed.push(name);
+				elem.classList.add('collapsed');
+			} else {
+				collapsed.splice(idx, 1);
+				elem.classList.remove('collapsed');
+			}
+			localStorage['collapsed'] = JSON.stringify(collapsed);
 		}
 
 		function deleteContext(name) {
