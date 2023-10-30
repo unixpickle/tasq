@@ -1,11 +1,11 @@
-import multiprocessing
 import random
 import sys
 import time
 import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
-from multiprocessing.context import BaseContext
+from queue import Empty, Queue
+from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -82,7 +82,6 @@ class TasqClient:
         self.retry_server_errors = retry_server_errors
         self.session = requests.Session()
         self._configure_session()
-        self.mp_context = multiprocessing.get_context("spawn")
 
     def push(self, contents: str, limit: int = 0) -> Optional[str]:
         """
@@ -240,9 +239,7 @@ class TasqClient:
         while True:
             task, timeout = self.pop()
             if task is not None:
-                rt = RunningTask(
-                    self, id=task.id, contents=task.contents, mp_context=self.mp_context
-                )
+                rt = RunningTask(self, id=task.id, contents=task.contents)
                 try:
                     yield rt
                     rt.completed()
@@ -339,28 +336,28 @@ class RunningTask(Task):
     cancel() or completed() is called.
     """
 
-    def __init__(
-        self, client: TasqClient, *args, mp_context: Optional[BaseContext] = None, **kwargs
-    ):
+    def __init__(self, client: TasqClient, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.client = client
-        self._proc = (mp_context or multiprocessing).Process(
+        self._kill_queue = Queue()
+        self._thread = Thread(
             target=RunningTask._keepalive_worker,
             name="tasq-keepalive-worker",
             args=(
+                self._kill_queue,
                 client,
                 self.id,
             ),
             daemon=True,
         )
-        self._proc.start()
+        self._thread.start()
 
     def cancel(self):
-        if self._proc is None:
+        if self._thread is None:
             return
-        self._proc.kill()
-        self._proc.join()
-        self._proc = None
+        self._kill_queue.put(None)
+        self._thread.join()
+        self._thread = None
 
     def completed(self):
         self.cancel()
@@ -368,6 +365,7 @@ class RunningTask(Task):
 
     @staticmethod
     def _keepalive_worker(
+        kill_queue: Queue,
         client: TasqClient,
         task_id: str,
     ):
@@ -375,8 +373,19 @@ class RunningTask(Task):
             try:
                 client.keepalive(task_id)
             except Exception as exc:  # pylint: disable=broad-except
+                # Ignore the error if we killed the thread during the
+                # keepalive call.
+                try:
+                    kill_queue.get(block=False)
+                    return
+                except Empty:
+                    pass
                 print(f"exception in tasq keepalive worker: {exc}", file=sys.stderr)
-            time.sleep(client.keepalive_interval)
+            try:
+                kill_queue.get(timeout=client.keepalive_interval)
+                return
+            except Empty:
+                pass
 
 
 class TasqRemoteError(Exception):
