@@ -304,7 +304,10 @@ const Homepage = `<!doctype html>
 				if (actionFn) {
 					await actionFn();
 				}
-				result = await (await fetch('/counts?all=1&window=60')).json();
+                const urlParams = new URLSearchParams(window.location.search);
+                const prefix = urlParams.get('prefix');
+		        const fetchUrl = prefix ? '/counts?all=1&window=60&prefix=' + prefix : '/counts?all=1&window=60';
+                result = await (await fetch(fetchUrl)).json();
 			} catch (e) {
 				errorBox.textContent = '' + e;
 				errorBox.classList.remove('hidden');

@@ -138,12 +138,16 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	prefix := r.URL.Query().Get("prefix")
+
 	if r.URL.Query().Get("all") == "1" {
 		allNames := []string{}
 		allCounts := []*QueueCounts{}
 		s.Queues.Iterate(func(name string, qs *QueueState) {
-			allNames = append(allNames, name)
-			allCounts = append(allCounts, qs.Counts(rateWindow))
+			if strings.HasPrefix(name, prefix) {
+				allNames = append(allNames, name)
+				allCounts = append(allCounts, qs.Counts(rateWindow))
+			}
 		})
 		serveObject(w, map[string]interface{}{
 			"names":  allNames,
