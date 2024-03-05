@@ -295,6 +295,11 @@ const Homepage = `<!doctype html>
 		const emptyBox = document.getElementById('empty-box');
 		const errorBox = document.getElementById('error-box');
 
+		function queueNamePrefix() {
+			const urlParams = new URLSearchParams(window.location.search);
+			return urlParams.get('prefix') || '';
+		}
+
 		async function reloadCounts(actionFn) {
 			countsList.classList.add('counts-loading');
 			emptyBox.classList.add('hidden');
@@ -314,23 +319,28 @@ const Homepage = `<!doctype html>
 				countsList.classList.remove('counts-loading');
 			}
 
+			const prefix = queueNamePrefix();
+
 			const counts = result['data']['counts'];
-			if (counts.length === 0) {
-				emptyBox.classList.remove('hidden');
-				delete localStorage['collapsed'];
-			} else {
-				const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
-				const allNames = [];
-				counts.forEach((counts, i) => {
-					const name = result['data']['names'][i];
-					allNames.push(name);
+			let numDisplayed = 0;
+
+			const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
+			const allNames = [];
+			counts.forEach((counts, i) => {
+				const name = result['data']['names'][i];
+				allNames.push(name);
+				if (name.startsWith(prefix)) {
 					addCountsToList(name, counts, collapsed.includes(name));
-				});
-				// Don't endlessly cache collapsed data about
-				// tasks that no longer exist.
-				localStorage['collapsed'] = JSON.stringify(
-					collapsed.filter((x) => allNames.includes(x)),
-				);
+					numDisplayed++;
+				}
+			});
+			// Don't endlessly cache collapsed data about deleted queues.
+			localStorage['collapsed'] = JSON.stringify(
+				collapsed.filter((x) => allNames.includes(x)),
+			);
+
+			if (numDisplayed === 0) {
+				emptyBox.classList.remove('hidden');
 			}
 
 			await reloadStats();
