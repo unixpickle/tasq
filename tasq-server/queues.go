@@ -183,24 +183,36 @@ type QueueState struct {
 	running *RunningQueue
 
 	completionCounter int64
+	lastModified      time.Time
 	rateTracker       *RateTracker
 }
 
 // NewQueueState creates empty queues with the given task timeout.
 func NewQueueState(timeout time.Duration) *QueueState {
 	return &QueueState{
-		pending:     NewPendingQueue(),
-		running:     NewRunningQueue(timeout),
-		rateTracker: NewRateTracker(0),
+		pending:      NewPendingQueue(),
+		running:      NewRunningQueue(timeout),
+		lastModified: time.Now(),
+		rateTracker:  NewRateTracker(0),
 	}
 }
 
 // DecodeQueueState decodes an object from QueueState.Encode()
 func DecodeQueueState(obj *EncodedQueueState) *QueueState {
+	// Legacy tasks may have not stored a modtime, in which case
+	// we update it to the time we load the checkpoint.
+	var lastMod time.Time
+	if obj.LastModified != nil {
+		lastMod = *obj.LastModified
+	} else {
+		lastMod = time.Now()
+	}
+
 	return &QueueState{
 		pending:           DecodePendingQueue(obj.Pending),
 		running:           DecodeRunningQueue(obj.Running),
 		completionCounter: obj.Completed,
+		lastModified:      lastMod,
 		rateTracker:       DecodeRateTracker(obj.RateTracker),
 	}
 }
@@ -209,11 +221,13 @@ func DecodeQueueState(obj *EncodedQueueState) *QueueState {
 func (q *QueueState) Encode() *EncodedQueueState {
 	q.lock.Lock()
 	defer q.lock.Unlock()
+	mt := q.lastModified
 	return &EncodedQueueState{
-		Pending:     q.pending.Encode(),
-		Running:     q.running.Encode(),
-		Completed:   q.completionCounter,
-		RateTracker: q.rateTracker.Encode(),
+		Pending:      q.pending.Encode(),
+		Running:      q.running.Encode(),
+		Completed:    q.completionCounter,
+		LastModified: &mt,
+		RateTracker:  q.rateTracker.Encode(),
 	}
 }
 
@@ -227,6 +241,7 @@ func (q *QueueState) Push(contents string, maxSize int) (string, bool) {
 	if maxSize > 0 && q.pending.Len()+q.running.Len() >= maxSize {
 		return "", false
 	}
+	q.modified()
 	return q.pending.AddTask(contents).ID, true
 }
 
@@ -244,6 +259,9 @@ func (q *QueueState) PushBatch(contents []string, maxSize int) ([]string, bool) 
 	for i, x := range contents {
 		ids[i] = q.pending.AddTask(x).ID
 	}
+	if len(contents) > 0 {
+		q.modified()
+	}
 	return ids, true
 }
 
@@ -254,12 +272,14 @@ func (q *QueueState) Pop(timeout *time.Duration) (*Task, *time.Time) {
 	defer q.lock.Unlock()
 	nextPending := q.pending.PopTask()
 	if nextPending != nil {
+		q.modified()
 		q.running.StartedTask(nextPending, timeout)
 		return nextPending, nil
 	}
 
 	nextExpired, nextTry := q.running.PopExpired()
 	if nextExpired != nil {
+		q.modified()
 		q.running.StartedTask(nextExpired, timeout)
 		return nextExpired, nil
 	}
@@ -297,6 +317,9 @@ func (q *QueueState) PopBatch(n int, timeout *time.Duration) ([]*Task, *time.Tim
 	for _, t := range tasks {
 		q.running.StartedTask(t, timeout)
 	}
+	if len(tasks) > 0 {
+		q.modified()
+	}
 
 	return tasks, nextTry
 }
@@ -323,6 +346,7 @@ func (q *QueueState) Completed(id string) bool {
 	res := q.running.Completed(id) != nil
 	if res {
 		q.completionCounter += 1
+		q.modified()
 		q.rateTracker.Add(1)
 	}
 	return res
@@ -333,7 +357,11 @@ func (q *QueueState) Completed(id string) bool {
 func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	return q.running.Keepalive(id, timeout)
+	success := q.running.Keepalive(id, timeout)
+	if success {
+		q.modified()
+	}
+	return success
 }
 
 // Counts gets the current number of tasks in each state.
@@ -349,11 +377,12 @@ func (q *QueueState) Counts(rateSeconds int) *QueueCounts {
 		rate = &r
 	}
 	return &QueueCounts{
-		Pending:   int64(q.pending.Len()),
-		Running:   int64(runningTotal - runningExpired),
-		Expired:   int64(runningExpired),
-		Completed: q.completionCounter,
-		Rate:      rate,
+		Pending:      int64(q.pending.Len()),
+		Running:      int64(runningTotal - runningExpired),
+		Expired:      int64(runningExpired),
+		Completed:    q.completionCounter,
+		LastModified: q.lastModified.UnixMilli(),
+		Rate:         rate,
 	}
 }
 
@@ -365,6 +394,7 @@ func (q *QueueState) Clear() {
 	q.running.Clear()
 	q.completionCounter = 0
 	q.rateTracker.Reset()
+	q.modified()
 }
 
 // Cleared returns true if the queue is effectively a fresh object, containing
@@ -383,7 +413,11 @@ func (q *QueueState) Cleared() bool {
 func (q *QueueState) ExpireAll() int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	return q.running.ExpireAll()
+	n := q.running.ExpireAll()
+	if n > 0 {
+		q.modified()
+	}
+	return n
 }
 
 // QueueExpired puts expired tasks from the running queue back into the pending
@@ -400,7 +434,14 @@ func (q *QueueState) QueueExpired() int {
 		n += 1
 		q.pending.PushTask(task)
 	}
+	if n > 0 {
+		q.modified()
+	}
 	return n
+}
+
+func (q *QueueState) modified() {
+	q.lastModified = time.Now()
 }
 
 type PendingQueue struct {
@@ -622,11 +663,12 @@ func (r *RunningQueue) Clear() {
 }
 
 type QueueCounts struct {
-	Pending   int64    `json:"pending"`
-	Running   int64    `json:"running"`
-	Expired   int64    `json:"expired"`
-	Completed int64    `json:"completed"`
-	Rate      *float64 `json:"rate,omitempty"`
+	Pending      int64    `json:"pending"`
+	Running      int64    `json:"running"`
+	Expired      int64    `json:"expired"`
+	Completed    int64    `json:"completed"`
+	LastModified int64    `json:"modtime"`
+	Rate         *float64 `json:"rate,omitempty"`
 }
 
 type ContextState struct {
@@ -642,18 +684,21 @@ func (c *ContextState) WriteJSON(w io.Writer) error {
 }
 
 type EncodedQueueState struct {
-	Pending     *EncodedPendingQueue
-	Running     *EncodedRunningQueue
-	Completed   int64
-	RateTracker *EncodedRateTracker
+	Pending      *EncodedPendingQueue
+	Running      *EncodedRunningQueue
+	Completed    int64
+	LastModified *time.Time
+	RateTracker  *EncodedRateTracker
 }
 
 func (e *EncodedQueueState) WriteJSON(w io.Writer) error {
+	t := e.LastModified
 	return WriteJSONObject(w, map[string]interface{}{
-		"Pending":     e.Pending,
-		"Running":     e.Running,
-		"Completed":   e.Completed,
-		"RateTracker": e.RateTracker,
+		"Pending":      e.Pending,
+		"Running":      e.Running,
+		"Completed":    e.Completed,
+		"LastModified": &t,
+		"RateTracker":  e.RateTracker,
 	})
 }
 

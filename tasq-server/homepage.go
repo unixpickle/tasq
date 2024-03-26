@@ -391,6 +391,7 @@ const Homepage = `<!doctype html>
 				['expired', 'Expired'],
 				['completed', 'Completed'],
 				['rate', 'Tasks/sec'],
+				['modtime', 'Last modified'],
 			];
 			const fieldTable = document.createElement('table');
 			fieldTable.className = 'counts-item-table';
@@ -404,6 +405,8 @@ const Homepage = `<!doctype html>
 				const dataCol = document.createElement('td');
 				if (fieldId === 'rate') {
 					dataCol.textContent = counts[fieldId].toFixed(3);
+				} else if (fieldId == 'modtime') {
+					dataCol.textContent = relativeTimeSince(counts[fieldId]);
 				} else {
 					dataCol.textContent = '' + counts[fieldId];
 				}
@@ -437,6 +440,27 @@ const Homepage = `<!doctype html>
 			elem.appendChild(actions);
 
 			countsList.appendChild(elem);
+		}
+
+		function relativeTimeSince(timestamp) {
+			const now = Date.now();
+			const since = Math.max(0, now - timestamp) / 1000;
+			if (since < 60) {
+				return Math.round(since) + ' second(s) ago';
+			} else if (since < 60*5) {
+				const minutes = Math.floor(since / 60);
+				const seconds = Math.round(since - minutes * 60);
+				return minutes + ' minutes and ' + seconds + ' second(s) ago';
+			} else if (since < 60*60) {
+				const minutes = Math.round(since / 60);
+				return minutes + ' minutes ago';
+			} else if (since < 60*60*24) {
+				const hours = (since / 60 / 60).toFixed(2);
+				return hours + ' hours ago';
+			} else {
+				const days = (since / 60 / 60 / 24).toFixed(2);
+				return days + ' days ago';
+			}
 		}
 
 		function toggleCollapse(elem, name) {
