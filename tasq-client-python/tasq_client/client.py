@@ -257,7 +257,7 @@ class TasqClient:
     def counts(self, rate_window: int = 0) -> QueueCounts:
         """Get the number of tasks in each state within the queue."""
         data = self._get(
-            f"/counts?window={rate_window}&modtime=1",
+            f"/counts?window={rate_window}&includeModtime=1",
             {
                 "pending": int,
                 "running": int,

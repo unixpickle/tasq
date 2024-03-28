@@ -309,7 +309,7 @@ const Homepage = `<!doctype html>
 				if (actionFn) {
 					await actionFn();
 				}
-				result = await (await fetch('/counts?all=1&window=60')).json();
+				result = await (await fetch('/counts?all=1&window=60&includeModtime=1')).json();
 			} catch (e) {
 				errorBox.textContent = '' + e;
 				errorBox.classList.remove('hidden');

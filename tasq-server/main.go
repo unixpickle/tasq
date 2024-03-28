@@ -112,7 +112,7 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 		} else {
 			fmt.Fprintf(w, "---- Context: %s ----\n", name)
 		}
-		counts := qs.Counts(0)
+		counts := qs.Counts(0, false)
 		fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
 		fmt.Fprintf(w, "In progress: %d\n", counts.Running)
 		fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
@@ -138,12 +138,14 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	includeModtime := r.URL.Query().Get("includeModtime") == "1"
+
 	if r.URL.Query().Get("all") == "1" {
 		allNames := []string{}
 		allCounts := []*QueueCounts{}
 		s.Queues.Iterate(func(name string, qs *QueueState) {
 			allNames = append(allNames, name)
-			allCounts = append(allCounts, qs.Counts(rateWindow))
+			allCounts = append(allCounts, qs.Counts(rateWindow, includeModtime))
 		})
 		serveObject(w, map[string]interface{}{
 			"names":  allNames,
@@ -152,7 +154,7 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		serveObject(w, qs.Counts(rateWindow))
+		serveObject(w, qs.Counts(rateWindow, includeModtime))
 	})
 }
 

@@ -365,7 +365,7 @@ func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 }
 
 // Counts gets the current number of tasks in each state.
-func (q *QueueState) Counts(rateSeconds int) *QueueCounts {
+func (q *QueueState) Counts(rateSeconds int, includeModtime bool) *QueueCounts {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	runningTotal := q.running.Len()
@@ -376,12 +376,17 @@ func (q *QueueState) Counts(rateSeconds int) *QueueCounts {
 		r := float64(q.rateTracker.Count(rateSeconds)) / float64(rateSeconds)
 		rate = &r
 	}
+	var modtime *int64
+	if includeModtime {
+		modtime = new(int64)
+		*modtime = q.lastModified.UnixMilli()
+	}
 	return &QueueCounts{
 		Pending:      int64(q.pending.Len()),
 		Running:      int64(runningTotal - runningExpired),
 		Expired:      int64(runningExpired),
 		Completed:    q.completionCounter,
-		LastModified: q.lastModified.UnixMilli(),
+		LastModified: modtime,
 		Rate:         rate,
 	}
 }
@@ -667,7 +672,7 @@ type QueueCounts struct {
 	Running      int64    `json:"running"`
 	Expired      int64    `json:"expired"`
 	Completed    int64    `json:"completed"`
-	LastModified int64    `json:"modtime"`
+	LastModified *int64   `json:"modtime,omitempty"`
 	Rate         *float64 `json:"rate,omitempty"`
 }
 
