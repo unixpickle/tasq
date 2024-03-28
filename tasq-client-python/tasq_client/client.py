@@ -35,6 +35,8 @@ class QueueCounts:
     # server is old enough to not support rate estimation.
     rate: Optional[float] = None
 
+    modtime: int
+
 
 class TasqClient:
     """
