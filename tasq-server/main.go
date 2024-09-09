@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
@@ -105,22 +105,24 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("content-type", "text/plain")
 	found := false
+	buf := bytes.NewBuffer(nil)
 	s.Queues.Iterate(func(name string, qs *QueueState) {
 		found = true
 		if name == "" {
-			fmt.Fprint(w, "---- Default context ----\n")
+			fmt.Fprint(buf, "---- Default context ----\n")
 		} else {
-			fmt.Fprintf(w, "---- Context: %s ----\n", name)
+			fmt.Fprintf(buf, "---- Context: %s ----\n", name)
 		}
 		counts := qs.Counts(0, false)
-		fmt.Fprintf(w, "    Pending: %d\n", counts.Pending)
-		fmt.Fprintf(w, "In progress: %d\n", counts.Running)
-		fmt.Fprintf(w, "    Expired: %d\n", counts.Expired)
-		fmt.Fprintf(w, "  Completed: %d\n", counts.Completed)
+		fmt.Fprintf(buf, "    Pending: %d\n", counts.Pending)
+		fmt.Fprintf(buf, "In progress: %d\n", counts.Running)
+		fmt.Fprintf(buf, "    Expired: %d\n", counts.Expired)
+		fmt.Fprintf(buf, "  Completed: %d\n", counts.Completed)
 	})
 	if !found {
-		fmt.Fprint(w, "No active queues.")
+		fmt.Fprint(buf, "No active queues.")
 	}
+	w.Write(buf.Bytes())
 }
 
 func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
@@ -153,9 +155,11 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	var obj interface{}
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		serveObject(w, qs.Counts(rateWindow, includeModtime))
+		obj = qs.Counts(rateWindow, includeModtime)
 	})
+	serveObject(w, obj)
 }
 
 func (s *Server) ServeStats(w http.ResponseWriter, r *http.Request) {
@@ -198,13 +202,13 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 	if contents == "" {
 		serveError(w, "must specify non-empty `contents` parameter")
 	} else {
+		var obj interface{}
 		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 			if id, ok := qs.Push(contents, limit); ok {
-				serveObject(w, id)
-			} else {
-				serveObject(w, nil)
+				obj = id
 			}
 		})
+		serveObject(w, obj)
 	}
 }
 
@@ -334,9 +338,10 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	id := r.FormValue("id")
 	var status bool
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		status = qs.Completed(r.FormValue("id"))
+		status = qs.Completed(id)
 	})
 	if status {
 		serveObject(w, true)
@@ -349,7 +354,7 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return
 	}
@@ -382,10 +387,11 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 	if !timeoutOk {
 		return
 	}
+	id := r.FormValue("id")
 
 	var status bool
 	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		status = qs.Keepalive(r.FormValue("id"), timeout)
+		status = qs.Keepalive(id, timeout)
 	})
 	if status {
 		serveObject(w, true)
