@@ -86,7 +86,10 @@ func ReadQueueStateMux(timeout time.Duration, path string) (*QueueStateMux, erro
 func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
 	q.saveLock.RLock()
 	defer q.saveLock.RUnlock()
+	q.get(name, f)
+}
 
+func (q *QueueStateMux) get(name string, f func(*QueueState)) {
 	q.lock.Lock()
 	qs, ok := q.queues[name]
 	if !ok {
@@ -123,7 +126,7 @@ func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
 	q.lock.Unlock()
 	sort.Strings(names)
 	for _, name := range names {
-		q.Get(name, func(qs *QueueState) {
+		q.get(name, func(qs *QueueState) {
 			f(name, qs)
 		})
 	}
