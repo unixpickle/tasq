@@ -268,6 +268,14 @@ class TasqClient:
         )
         return QueueCounts(**data)
 
+    def clear(self):
+        """Deletes the queue and all tasks in it."""
+        result = self._post_form("/task/clear", dict())
+        if result is True:
+            return True
+        else:
+            raise TasqMisbehavingServerError("failed to clear queue")
+
     def __getstate__(
         self,
     ):
