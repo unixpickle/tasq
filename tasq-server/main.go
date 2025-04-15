@@ -106,7 +106,7 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", "text/plain")
 	found := false
 	buf := bytes.NewBuffer(nil)
-	s.Queues.Iterate(func(name string, qs *QueueState) {
+	err := s.Queues.Iterate(func(name string, qs *QueueState) {
 		found = true
 		if name == "" {
 			fmt.Fprint(buf, "---- Default context ----\n")
@@ -119,7 +119,10 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(buf, "    Expired: %d\n", counts.Expired)
 		fmt.Fprintf(buf, "  Completed: %d\n", counts.Completed)
 	})
-	if !found {
+	if err != nil {
+		fmt.Fprint(buf, err.Error())
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else if !found {
 		fmt.Fprint(buf, "No active queues.")
 	}
 	w.Write(buf.Bytes())
@@ -135,7 +138,7 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		var err error
 		rateWindow, err = strconv.Atoi(s)
 		if err != nil {
-			serveError(w, err.Error())
+			serveError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -145,21 +148,29 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("all") == "1" {
 		allNames := []string{}
 		allCounts := []*QueueCounts{}
-		s.Queues.Iterate(func(name string, qs *QueueState) {
+		err := s.Queues.Iterate(func(name string, qs *QueueState) {
 			allNames = append(allNames, name)
 			allCounts = append(allCounts, qs.Counts(rateWindow, includeModtime))
 		})
-		serveObject(w, map[string]interface{}{
-			"names":  allNames,
-			"counts": allCounts,
-		})
+		if err != nil {
+			serveError(w, err.Error(), http.StatusServiceUnavailable)
+		} else {
+			serveObject(w, map[string]interface{}{
+				"names":  allNames,
+				"counts": allCounts,
+			})
+		}
 		return
 	}
 	var obj interface{}
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		obj = qs.Counts(rateWindow, includeModtime)
 	})
-	serveObject(w, obj)
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else {
+		serveObject(w, obj)
+	}
 }
 
 func (s *Server) ServeStats(w http.ResponseWriter, r *http.Request) {
@@ -172,13 +183,13 @@ func (s *Server) ServeStats(w http.ResponseWriter, r *http.Request) {
 
 	s.SaveStatsLock.RLock()
 	saveStats := map[string]interface{}{
-		"elapsed": (time.Now().Sub(s.LastSave).Seconds()),
+		"elapsed": (time.Since(s.LastSave).Seconds()),
 		"latency": s.LastSaveDuration.Seconds(),
 	}
 	s.SaveStatsLock.RUnlock()
 
 	serveObject(w, map[string]interface{}{
-		"uptime": time.Now().Sub(s.StartTime).Seconds(),
+		"uptime": time.Since(s.StartTime).Seconds(),
 		"memory": map[string]interface{}{
 			"alloc":      m.Alloc,
 			"totalAlloc": m.TotalAlloc,
@@ -196,19 +207,23 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 	contents := r.FormValue("contents")
 	limit, err := parseLimit(r.FormValue("limit"))
 	if err != nil {
-		serveError(w, err.Error())
+		serveError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if contents == "" {
-		serveError(w, "must specify non-empty `contents` parameter")
+		serveError(w, "must specify non-empty `contents` parameter", http.StatusBadRequest)
 	} else {
 		var obj interface{}
-		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 			if id, ok := qs.Push(contents, limit); ok {
 				obj = id
 			}
 		})
-		serveObject(w, obj)
+		if err != nil {
+			serveError(w, err.Error(), http.StatusServiceUnavailable)
+		} else {
+			serveObject(w, obj)
+		}
 	}
 }
 
@@ -222,18 +237,22 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	var contents []string
 	if err := json.Unmarshal(data, &contents); err != nil {
-		serveError(w, err.Error())
+		serveError(w, err.Error(), http.StatusBadRequest)
 	} else {
 		limit, err := parseLimit(r.URL.Query().Get("limit"))
 		if err != nil {
-			serveError(w, err.Error())
+			serveError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		var ids []string
-		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		err = s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 			ids, _ = qs.PushBatch(contents, limit)
 		})
-		serveObject(w, ids)
+		if err != nil {
+			serveError(w, err.Error(), http.StatusServiceUnavailable)
+		} else {
+			serveObject(w, ids)
+		}
 	}
 }
 
@@ -248,14 +267,16 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 
 	var task *Task
 	var nextTry *time.Time
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		task, nextTry = qs.Pop(timeout)
 	})
-	if task != nil {
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else if task != nil {
 		serveObject(w, task)
 	} else {
 		if nextTry != nil {
-			timeout := (*nextTry).Sub(time.Now())
+			timeout := time.Until(*nextTry)
 			serveObject(w, map[string]interface{}{
 				"done":  false,
 				"retry": math.Max(0, timeout.Seconds()),
@@ -277,24 +298,28 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 
 	n, err := strconv.Atoi(r.FormValue("count"))
 	if err != nil {
-		serveError(w, "invalid 'count' parameter: "+err.Error())
+		serveError(w, "invalid 'count' parameter: "+err.Error(), http.StatusBadRequest)
 		return
 	} else if n <= 0 {
-		serveError(w, "invalid 'count' requested")
+		serveError(w, "invalid 'count' requested", http.StatusBadRequest)
 		return
 	}
 
 	var tasks []*Task
 	var nextTry *time.Time
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err = s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		tasks, nextTry = qs.PopBatch(n, timeout)
 	})
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
 	result := map[string]interface{}{
 		"done": len(tasks) == 0 && nextTry == nil,
 	}
 	if nextTry != nil {
-		timeout := (*nextTry).Sub(time.Now())
+		timeout := time.Until(*nextTry)
 		result["retry"] = math.Max(0, timeout.Seconds())
 	}
 	if tasks == nil {
@@ -312,14 +337,16 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 	}
 	var task, nextTask *Task
 	var nextTime *time.Time
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		task, nextTask, nextTime = qs.Peek()
 	})
-	if task != nil {
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else if task != nil {
 		serveObject(w, map[string]interface{}{"contents": task.Contents, "id": task.ID})
 	} else {
 		if nextTask != nil {
-			timeout := (*nextTime).Sub(time.Now())
+			timeout := time.Until(*nextTime)
 			serveObject(w, map[string]interface{}{
 				"done":  false,
 				"retry": math.Max(0, timeout.Seconds()),
@@ -340,13 +367,15 @@ func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.FormValue("id")
 	var status bool
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		status = qs.Completed(id)
 	})
-	if status {
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else if status {
 		serveObject(w, true)
 	} else {
-		serveError(w, "there was no in-progress task with the specified `id`")
+		serveError(w, "there was no in-progress task with the specified `id`", http.StatusOK)
 	}
 }
 
@@ -360,19 +389,23 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	var ids []string
 	if err := json.Unmarshal(data, &ids); err != nil {
-		serveError(w, err.Error())
+		serveError(w, err.Error(), http.StatusBadRequest)
 	} else {
 		var failures []string
-		s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 			for _, id := range ids {
 				if !qs.Completed(id) {
 					failures = append(failures, id)
 				}
 			}
 		})
+		if err != nil {
+			serveError(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		if len(failures) > 0 {
 			serveError(w, "there were no in-progress tasks with the specified ids: "+
-				strings.Join(failures, ", "))
+				strings.Join(failures, ", "), http.StatusOK)
 		} else {
 			serveObject(w, true)
 		}
@@ -390,13 +423,15 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("id")
 
 	var status bool
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		status = qs.Keepalive(id, timeout)
 	})
-	if status {
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else if status {
 		serveObject(w, true)
 	} else {
-		serveError(w, "there was no in-progress task with the specified `id`")
+		serveError(w, "there was no in-progress task with the specified `id`", http.StatusOK)
 	}
 }
 
@@ -404,10 +439,14 @@ func (s *Server) ServeClearTasks(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		qs.Clear()
 	})
-	serveObject(w, true)
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else {
+		serveObject(w, true)
+	}
 }
 
 func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
@@ -415,10 +454,14 @@ func (s *Server) ServeExpireTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var n int
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		n = qs.ExpireAll()
 	})
-	serveObject(w, n)
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else {
+		serveObject(w, n)
+	}
 }
 
 func (s *Server) ServeQueueExpired(w http.ResponseWriter, r *http.Request) {
@@ -426,10 +469,14 @@ func (s *Server) ServeQueueExpired(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var n int
-	s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		n = qs.QueueExpired()
 	})
-	serveObject(w, n)
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else {
+		serveObject(w, n)
+	}
 }
 
 func (s *Server) BasicAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -505,7 +552,7 @@ func (s *Server) SaveLoop() {
 			log.Fatal(err)
 		}
 		t1 := time.Now()
-		err = s.Queues.Serialize(w)
+		err = s.Queues.Serialize(w, false)
 		w.Close()
 		if err != nil {
 			log.Fatal(err)
@@ -537,7 +584,8 @@ func serveObject(w http.ResponseWriter, obj interface{}) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"data": obj})
 }
 
-func serveError(w http.ResponseWriter, err string) {
+func serveError(w http.ResponseWriter, err string, status int) {
 	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]interface{}{"error": err})
 }

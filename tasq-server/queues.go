@@ -15,13 +15,16 @@ import (
 	"github.com/unixpickle/essentials"
 )
 
+var ErrShuttingDown = errors.New("server is shutting down")
+
 // QueueStateMux manages multiple (named) QueueStates.
 type QueueStateMux struct {
-	saveLock sync.RWMutex
-	lock     sync.Mutex
-	queues   map[string]*QueueState
-	users    map[string]int
-	timeout  time.Duration
+	saveLock   sync.RWMutex
+	finalError error
+	lock       sync.Mutex
+	queues     map[string]*QueueState
+	users      map[string]int
+	timeout    time.Duration
 }
 
 // NewQueueStateMux creates a QueueStateMux with the given task timeout.
@@ -83,10 +86,16 @@ func ReadQueueStateMux(timeout time.Duration, path string) (*QueueStateMux, erro
 //
 // The QueueState should not be accessed outside of f. In particular, f should
 // not store a reference to the QueueState anywhere outside of its scope.
-func (q *QueueStateMux) Get(name string, f func(*QueueState)) {
+//
+// Returns an error if the queue state has finished a final save.
+func (q *QueueStateMux) Get(name string, f func(*QueueState)) error {
 	q.saveLock.RLock()
 	defer q.saveLock.RUnlock()
+	if q.finalError != nil {
+		return q.finalError
+	}
 	q.get(name, f)
+	return nil
 }
 
 func (q *QueueStateMux) get(name string, f func(*QueueState)) {
@@ -114,9 +123,13 @@ func (q *QueueStateMux) get(name string, f func(*QueueState)) {
 }
 
 // Iterate calls f with every non-empty QueueState in q.
-func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
+func (q *QueueStateMux) Iterate(f func(string, *QueueState)) error {
 	q.saveLock.RLock()
 	defer q.saveLock.RUnlock()
+
+	if q.finalError != nil {
+		return q.finalError
+	}
 
 	q.lock.Lock()
 	names := make([]string, 0, len(q.queues))
@@ -130,18 +143,29 @@ func (q *QueueStateMux) Iterate(f func(string, *QueueState)) {
 			f(name, qs)
 		})
 	}
+
+	return nil
 }
 
 // Serialize writes the contents of the queue to a file, blocking all
 // operations on all queues to make sure cross-queue consistent state.
-func (q *QueueStateMux) Serialize(w io.Writer) error {
+//
+// If shutdown is true, then future operations after the state snapshot will
+// result in an ErrShuttingDown.
+func (q *QueueStateMux) Serialize(w io.Writer, shutdown bool) error {
 	q.saveLock.Lock()
+	if q.finalError != nil {
+		return q.finalError
+	}
 	var states []ContextState
 	for name, q := range q.queues {
 		states = append(states, ContextState{
 			Name:    name,
 			Encoded: q.Encode(),
 		})
+	}
+	if shutdown {
+		q.finalError = ErrShuttingDown
 	}
 	q.saveLock.Unlock()
 
