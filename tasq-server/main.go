@@ -12,10 +12,12 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/unixpickle/essentials"
@@ -83,6 +85,8 @@ type Server struct {
 	SaveStatsLock    sync.RWMutex
 	LastSave         time.Time
 	LastSaveDuration time.Duration
+
+	SignalChan <-chan os.Signal
 }
 
 func (s *Server) ServeIndex(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +529,10 @@ func (s *Server) TimeoutParam(w http.ResponseWriter, r *http.Request) (*time.Dur
 }
 
 func (s *Server) SetupSaveLoop(timeout time.Duration) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGUSR1)
+	s.SignalChan = sigChan
+
 	if s.SavePath == "" {
 		return
 	}
@@ -543,8 +551,14 @@ func (s *Server) SetupSaveLoop(timeout time.Duration) {
 }
 
 func (s *Server) SaveLoop() {
-	for {
-		time.Sleep(s.SaveInterval)
+	var shutdown bool
+	for !shutdown {
+		select {
+		case <-time.After(s.SaveInterval):
+		case <-s.SignalChan:
+			log.Println("caught SIGUSR1")
+			shutdown = true
+		}
 		log.Printf("Saving state to: %s", s.SavePath)
 		tmpPath := s.SavePath + ".tmp"
 		w, err := os.Create(tmpPath)
@@ -552,7 +566,7 @@ func (s *Server) SaveLoop() {
 			log.Fatal(err)
 		}
 		t1 := time.Now()
-		err = s.Queues.Serialize(w, false)
+		err = s.Queues.Serialize(w, shutdown)
 		w.Close()
 		if err != nil {
 			log.Fatal(err)
@@ -566,6 +580,10 @@ func (s *Server) SaveLoop() {
 
 		log.Printf("Saved state to: %s", s.SavePath)
 	}
+
+	// We are shutting down post-save
+	log.Println("exiting due to shutdown signal")
+	os.Exit(0)
 }
 
 func parseLimit(limit string) (int, error) {
