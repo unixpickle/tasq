@@ -184,6 +184,23 @@ const Homepage = `<!doctype html>
 				display: inline-block;
 			}
 
+			.view-control-box-field {
+				padding: 3px;
+			}
+
+			.view-control-box-field > label {
+				display: inline-block;
+				margin-right: 2px;
+				width: 150px;
+				text-align: right;
+			}
+
+			.view-control-box-field .value {
+				box-sizing: border-box;
+				margin-left: 2px;
+				width: 150px;
+			}
+
 			.overlay-container {
 				display: block;
 				position: fixed;
@@ -232,9 +249,21 @@ const Homepage = `<!doctype html>
 		</style>
 	</head>
 	<body>
+		<div id="view-control-box" class="width-sizing panel">
+			<div class="view-control-box-field">
+				<label>Name prefix filter:</label><input id="prefix-filter" class="value">
+			</div>
+			<div class="view-control-box-field">
+				<label>Sort order:</label><select id="sort-order" class="value">
+					<option selected value="name">Name</option>
+					<option value="modtime">Last modified</option>
+					<option value="count">Task count</option>
+				</select>
+			</div>
+		</div>
 		<ol id="counts-list" class="width-sizing counts-loading"></ol>
 		<div id="empty-box" class="width-sizing panel hidden">
-			There are no active queues.
+			There are no queues to show.
 		</div>
 		<div id="error-box" class="width-sizing panel hidden"></div>
 		<form id="add-task-box" class="width-sizing panel" onsubmit="return quickAddTask(event);">
@@ -295,9 +324,78 @@ const Homepage = `<!doctype html>
 		const emptyBox = document.getElementById('empty-box');
 		const errorBox = document.getElementById('error-box');
 
+		const prefixFilterInput = document.getElementById('prefix-filter');
+		const sortOrderSelect = document.getElementById('sort-order');
+
+		let currentCounts = null;
+		let currentError = null;
+
 		function queueNamePrefix() {
 			const urlParams = new URLSearchParams(window.location.search);
 			return urlParams.get('prefix') || '';
+		}
+
+		function displayCurrent() {
+			if (currentError === null && currentCounts === null) {
+				// The initial reload hasn't finished yet.
+				return;
+			}
+
+			countsList.innerHTML = '';
+			if (currentError) {
+				emptyBox.classList.add('hidden');
+				errorBox.textContent = '' + currentError;
+				errorBox.classList.remove('hidden');
+				return;
+			}
+			errorBox.classList.add('hidden');
+
+			const prefix = prefixFilterInput.value;
+			const sortOrder = sortOrderSelect.value;
+
+			const counts = currentCounts.slice();
+			if (sortOrder == 'name') {
+				counts.sort((a, b) => {
+					if (a.name < b.name) {
+						return -1;
+					} else {
+						return 1;
+					}
+				});
+			} else if (sortOrder == 'modtime') {
+				counts.sort((a, b) => {
+				    return b.counts.modtime - a.counts.modtime;
+				});
+			} else if (sortOrder == 'count') {
+				counts.sort((a, b) => {
+					let total1 = a.counts.pending + a.counts.running + a.counts.expired;
+					let total2 = b.counts.pending + b.counts.running + b.counts.expired;
+					return total2 - total1;
+				});
+			}
+
+			const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
+			const allNames = [];
+			let numDisplayed = 0;
+			counts.forEach((obj) => {
+				const name = obj.name;
+				allNames.push(name);
+				if (name.startsWith(prefix)) {
+					addCountsToList(name, obj.counts, collapsed.includes(name));
+					numDisplayed++;
+				}
+			});
+
+			// Don't endlessly cache collapsed data about deleted queues.
+			localStorage['collapsed'] = JSON.stringify(
+				collapsed.filter((x) => allNames.includes(x)),
+			);
+
+			if (numDisplayed === 0) {
+				emptyBox.classList.remove('hidden');
+			} else {
+				emptyBox.classList.add('hidden');
+			}
 		}
 
 		async function reloadCounts(actionFn) {
@@ -311,38 +409,22 @@ const Homepage = `<!doctype html>
 				}
 				result = await (await fetch('/counts?all=1&window=60&includeModtime=1')).json();
 			} catch (e) {
-				errorBox.textContent = '' + e;
-				errorBox.classList.remove('hidden');
+			    currentError = e;
+				displayCurrent();
 				return false;
 			} finally {
-				countsList.innerHTML = '';
 				countsList.classList.remove('counts-loading');
 			}
+			currentError = null;
 
-			const prefix = queueNamePrefix();
-
-			const counts = result['data']['counts'];
-			let numDisplayed = 0;
-
-			const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
-			const allNames = [];
-			counts.forEach((counts, i) => {
-				const name = result['data']['names'][i];
-				allNames.push(name);
-				if (name.startsWith(prefix)) {
-					addCountsToList(name, counts, collapsed.includes(name));
-					numDisplayed++;
-				}
-			});
-			// Don't endlessly cache collapsed data about deleted queues.
-			localStorage['collapsed'] = JSON.stringify(
-				collapsed.filter((x) => allNames.includes(x)),
-			);
-
-			if (numDisplayed === 0) {
-				emptyBox.classList.remove('hidden');
+			currentCounts = [];
+			for (let i = 0, lim = result['data']['names'].length; i < lim; i++) {
+				currentCounts.push({
+					name: result['data']['names'][i],
+					counts: result['data']['counts'][i],
+				});
 			}
-
+			displayCurrent();
 			await reloadStats();
 
 			return true;
@@ -553,6 +635,9 @@ const Homepage = `<!doctype html>
 			container.classList.add('overlay-container-hidden');
 		}
 
+		prefixFilterInput.value = queueNamePrefix();
+		prefixFilterInput.oninput = displayCurrent;
+		sortOrderSelect.onchange = displayCurrent;
 		reloadCounts(null);
 		-->
 		</script>
