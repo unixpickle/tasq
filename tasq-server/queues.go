@@ -392,7 +392,7 @@ func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 }
 
 // Counts gets the current number of tasks in each state.
-func (q *QueueState) Counts(rateSeconds int, includeModtime bool) *QueueCounts {
+func (q *QueueState) Counts(rateSeconds int, includeModtime, includeBytes bool) *QueueCounts {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 	runningTotal := q.running.Len()
@@ -408,6 +408,11 @@ func (q *QueueState) Counts(rateSeconds int, includeModtime bool) *QueueCounts {
 		modtime = new(int64)
 		*modtime = q.lastModified.UnixMilli()
 	}
+	var bytes *int64
+	if includeBytes {
+		bytes = new(int64)
+		*bytes = q.pending.Bytes() + q.running.Bytes()
+	}
 	return &QueueCounts{
 		Pending:      int64(q.pending.Len()),
 		Running:      int64(runningTotal - runningExpired),
@@ -415,6 +420,7 @@ func (q *QueueState) Counts(rateSeconds int, includeModtime bool) *QueueCounts {
 		Completed:    q.completionCounter,
 		LastModified: modtime,
 		Rate:         rate,
+		Bytes:        bytes,
 	}
 }
 
@@ -501,6 +507,11 @@ func (p *PendingQueue) Encode() *EncodedPendingQueue {
 	}
 }
 
+// Bytes returns the number of bytes in all tasks in the queue.
+func (p *PendingQueue) Bytes() int64 {
+	return p.deque.Bytes()
+}
+
 // AddTask creates a new task with the given contents and enqueues it.
 func (p *PendingQueue) AddTask(contents string) *Task {
 	task := &Task{
@@ -578,6 +589,11 @@ func (r *RunningQueue) Encode() *EncodedRunningQueue {
 		Deque:   r.deque.Encode(),
 		Timeout: r.timeout,
 	}
+}
+
+// Bytes returns the number of bytes in all tasks in the queue.
+func (r *RunningQueue) Bytes() int64 {
+	return r.deque.Bytes()
 }
 
 // StartedTask adds the task to the queue and sets its timeout accordingly.
@@ -701,6 +717,7 @@ type QueueCounts struct {
 	Completed    int64    `json:"completed"`
 	LastModified *int64   `json:"modtime,omitempty"`
 	Rate         *float64 `json:"rate,omitempty"`
+	Bytes        *int64   `json:"bytes,omitempty"`
 }
 
 type ContextState struct {

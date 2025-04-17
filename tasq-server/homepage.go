@@ -258,6 +258,7 @@ const Homepage = `<!doctype html>
 					<option selected value="name">Name</option>
 					<option value="modtime">Last modified</option>
 					<option value="count">Task count</option>
+					<option value="bytes">Memory</option>
 				</select>
 			</div>
 		</div>
@@ -372,6 +373,10 @@ const Homepage = `<!doctype html>
 					let total2 = b.counts.pending + b.counts.running + b.counts.expired;
 					return total2 - total1;
 				});
+			} else if (sortOrder == 'bytes') {
+				counts.sort((a, b) => {
+					return a.counts.bytes - b.counts.bytes;
+				});
 			}
 
 			const collapsed = JSON.parse(localStorage['collapsed'] || '[]');
@@ -407,7 +412,7 @@ const Homepage = `<!doctype html>
 				if (actionFn) {
 					await actionFn();
 				}
-				result = await (await fetch('/counts?all=1&window=60&includeModtime=1')).json();
+				result = await (await fetch('/counts?all=1&window=60&includeModtime=1&includeBytes=1')).json();
 			} catch (e) {
 			    currentError = e;
 				displayCurrent();
@@ -474,6 +479,7 @@ const Homepage = `<!doctype html>
 				['completed', 'Completed'],
 				['rate', 'Tasks/sec'],
 				['modtime', 'Last modified'],
+				['bytes', 'Memory'],
 			];
 			const fieldTable = document.createElement('table');
 			fieldTable.className = 'counts-item-table';

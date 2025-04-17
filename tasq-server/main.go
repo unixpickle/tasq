@@ -117,11 +117,12 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 		} else {
 			fmt.Fprintf(buf, "---- Context: %s ----\n", name)
 		}
-		counts := qs.Counts(0, false)
+		counts := qs.Counts(0, false, true)
 		fmt.Fprintf(buf, "    Pending: %d\n", counts.Pending)
 		fmt.Fprintf(buf, "In progress: %d\n", counts.Running)
 		fmt.Fprintf(buf, "    Expired: %d\n", counts.Expired)
 		fmt.Fprintf(buf, "  Completed: %d\n", counts.Completed)
+		fmt.Fprintf(buf, "      Bytes: %d\n", counts.Bytes)
 	})
 	if err != nil {
 		fmt.Fprint(buf, err.Error())
@@ -148,13 +149,14 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeModtime := r.URL.Query().Get("includeModtime") == "1"
+	includeBytes := r.URL.Query().Get("includeBytes") == "1"
 
 	if r.URL.Query().Get("all") == "1" {
 		allNames := []string{}
 		allCounts := []*QueueCounts{}
 		err := s.Queues.Iterate(func(name string, qs *QueueState) {
 			allNames = append(allNames, name)
-			allCounts = append(allCounts, qs.Counts(rateWindow, includeModtime))
+			allCounts = append(allCounts, qs.Counts(rateWindow, includeModtime, includeBytes))
 		})
 		if err != nil {
 			serveError(w, err.Error(), http.StatusServiceUnavailable)
@@ -166,9 +168,10 @@ func (s *Server) ServeCounts(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
 	var obj interface{}
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		obj = qs.Counts(rateWindow, includeModtime)
+		obj = qs.Counts(rateWindow, includeModtime, includeBytes)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)

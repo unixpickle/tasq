@@ -21,6 +21,7 @@ type TaskDeque struct {
 	first *Task
 	last  *Task
 	count int
+	bytes int64
 }
 
 // DecodeTaskDeque inverts TaskDeque.Encode(), converting a serializable
@@ -37,6 +38,7 @@ func DecodeTaskDeque(obj []EncodedTask) *TaskDeque {
 			task.queuePrev = res.last
 			res.last = task
 		}
+		res.bytes += int64(len(et.Contents))
 	}
 	return res
 }
@@ -59,8 +61,13 @@ func (t *TaskDeque) Len() int {
 	return t.count
 }
 
+func (t *TaskDeque) Bytes() int64 {
+	return t.bytes
+}
+
 func (t *TaskDeque) PushLast(task *Task) {
 	t.count += 1
+	t.bytes += int64(len(task.Contents))
 	if t.last == nil {
 		t.first = task
 		t.last = task
@@ -74,27 +81,9 @@ func (t *TaskDeque) PushLast(task *Task) {
 	}
 }
 
-func (t *TaskDeque) PushByExpiration(task *Task) {
-	prev := t.last
-	for prev != nil && prev.expiration.After(task.expiration) {
-		prev = prev.queuePrev
-	}
-	if prev == nil {
-		t.PushFirst(task)
-	} else if prev.queueNext == nil {
-		t.PushLast(task)
-	} else {
-		t.count += 1
-		next := prev.queueNext
-		prev.queueNext = task
-		next.queuePrev = task
-		task.queuePrev = prev
-		task.queueNext = next
-	}
-}
-
 func (t *TaskDeque) PushFirst(task *Task) {
 	t.count += 1
+	t.bytes += int64(len(task.Contents))
 	if t.first == nil {
 		t.first = task
 		t.last = task
@@ -105,6 +94,26 @@ func (t *TaskDeque) PushFirst(task *Task) {
 		task.queueNext = t.first
 		task.queuePrev = nil
 		t.first = task
+	}
+}
+
+func (t *TaskDeque) PushByExpiration(task *Task) {
+	prev := t.last
+	for prev != nil && prev.expiration.After(task.expiration) {
+		prev = prev.queuePrev
+	}
+	if prev == nil {
+		t.PushFirst(task)
+	} else if prev.queueNext == nil {
+		t.PushLast(task)
+	} else {
+		t.bytes += int64(len(task.Contents))
+		t.count += 1
+		next := prev.queueNext
+		prev.queueNext = task
+		next.queuePrev = task
+		task.queuePrev = prev
+		task.queueNext = next
 	}
 }
 
@@ -158,6 +167,7 @@ func (t *TaskDeque) Remove(task *Task) {
 		task.queuePrev = nil
 	}
 	t.count -= 1
+	t.bytes -= int64(len(task.Contents))
 	if task.queueNext != nil || task.queuePrev != nil {
 		panic("pointer unexpectedly preserved")
 	}

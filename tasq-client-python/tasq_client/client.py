@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter, Retry
@@ -36,6 +36,7 @@ class QueueCounts:
     rate: Optional[float] = None
 
     modtime: Optional[int] = None
+    bytes: Optional[int] = None
 
 
 class TasqClient:
@@ -93,7 +94,7 @@ class TasqClient:
         full, in which case None is returned.
         """
         return self._post_form(
-            f"/task/push", dict(contents=contents, limit=limit), type_template=OptionalValue(str)
+            "/task/push", dict(contents=contents, limit=limit), type_template=OptionalValue(str)
         )
 
     def push_batch(self, ids: List[str], limit: int = 0) -> Optional[List[str]]:
@@ -130,12 +131,12 @@ class TasqClient:
         Unlike push_batch(), the ids returned by this method will never be
         None, since all tasks must be pushed.
         """
-        assert isinstance(
-            contents, (list, tuple)
-        ), f"expected a list of task contents, got object of type {type(contents)}"
-        assert (
-            init_wait_time <= self.max_timeout
-        ), f"wait time {init_wait_time=} should not be larger than {self.max_timeout=}"
+        assert isinstance(contents, (list, tuple)), (
+            f"expected a list of task contents, got object of type {type(contents)}"
+        )
+        assert init_wait_time <= self.max_timeout, (
+            f"wait time {init_wait_time=} should not be larger than {self.max_timeout=}"
+        )
         assert limit < 0 or limit >= len(contents)
 
         cur_wait = init_wait_time
@@ -226,7 +227,7 @@ class TasqClient:
         self._post_form("/task/keepalive", dict(id=id), supports_timeout=True)
 
     @contextmanager
-    def pop_running_task(self) -> Optional["RunningTask"]:
+    def pop_running_task(self) -> Generator[Optional["RunningTask"], None, None]:
         """
         Pop a task from the queue and wrap it in a RunningTask, blocking until
         the queue is completely empty or a task is successfully popped.
@@ -257,13 +258,15 @@ class TasqClient:
     def counts(self, rate_window: int = 0) -> QueueCounts:
         """Get the number of tasks in each state within the queue."""
         data = self._get(
-            f"/counts?window={rate_window}&includeModtime=1",
+            f"/counts?window={rate_window}&includeModtime=1&includeBytes=1",
             {
                 "pending": int,
                 "running": int,
                 "expired": int,
                 "completed": int,
                 OptionalKey("minute_rate"): float,
+                OptionalKey("modtime"): int,
+                OptionalKey("bytes"): int,
             },
         )
         return QueueCounts(**data)
