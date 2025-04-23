@@ -132,9 +132,7 @@ const Homepage = `<!doctype html>
 				outline: 0;
 			}
 
-			.counts-item-action, .overlay-close-button {
-				position: relative;
-				margin: 5px;
+			button {
 				padding: 5px 10px;
 				border: none;
 				font-size: 1.2em;
@@ -143,15 +141,20 @@ const Homepage = `<!doctype html>
 				cursor: pointer;
 			}
 
-			.counts-item-action:hover, .overlay-close-button:hover {
+			button:hover {
 				background-color: #7b7b7b;
 			}
 
-			.counts-item-action-destructive {
+			.counts-item-action, .overlay-close-button {
+				position: relative;
+				margin: 5px;
+			}
+
+			button.button-destructive {
 				background-color: #ee6666;
 			}
 
-			.counts-item-action-destructive:hover {
+			button.button-destructive:hover {
 				background-color: #cc5555;
 			}
 
@@ -199,6 +202,10 @@ const Homepage = `<!doctype html>
 				box-sizing: border-box;
 				margin-left: 2px;
 				width: 150px;
+			}
+
+			.view-control-buttons > button {
+				margin: 5px;
 			}
 
 			.overlay-container {
@@ -260,6 +267,10 @@ const Homepage = `<!doctype html>
 					<option value="count">Task count</option>
 					<option value="bytes">Memory</option>
 				</select>
+			</div>
+			<div class="view-control-buttons">
+				<button id="clear-url-button" class="button-destructive">Clear URL</button>
+				<button id="add-to-url-button">Add to URL</button>
 			</div>
 		</div>
 		<ol id="counts-list" class="width-sizing counts-loading"></ol>
@@ -328,12 +339,39 @@ const Homepage = `<!doctype html>
 		const prefixFilterInput = document.getElementById('prefix-filter');
 		const sortOrderSelect = document.getElementById('sort-order');
 
+		const clearURLButton = document.getElementById('clear-url-button');
+		const addToURLButton = document.getElementById('add-to-url-button');
+
+		const defaultSortOrder = sortOrderSelect.value;
+
 		let currentCounts = null;
 		let currentError = null;
 
 		function queueNamePrefix() {
 			const urlParams = new URLSearchParams(window.location.search);
 			return urlParams.get('prefix') || '';
+		}
+
+		function queueSortOrder() {
+			const urlParams = new URLSearchParams(window.location.search);
+			return urlParams.get('sort-order') || defaultSortOrder;
+		}
+
+		function updateQueryButtons() {
+			const querySort = queueSortOrder();
+			const namePrefix = queueNamePrefix();
+			if (querySort !== sortOrderSelect.value || namePrefix != prefixFilterInput.value) {
+				addToURLButton.style.display = '';
+			} else {
+			    addToURLButton.style.display = 'none';
+			}
+
+			const urlParams = new URLSearchParams(window.location.search);
+			if (urlParams.get('sort-order') || urlParams.get('prefix')) {
+				clearURLButton.style.display = '';
+			} else {
+			    clearURLButton.style.display = 'none';
+			}
 		}
 
 		function displayCurrent() {
@@ -375,7 +413,7 @@ const Homepage = `<!doctype html>
 				});
 			} else if (sortOrder == 'bytes') {
 				counts.sort((a, b) => {
-					return a.counts.bytes - b.counts.bytes;
+					return b.counts.bytes - a.counts.bytes;
 				});
 			}
 
@@ -518,7 +556,7 @@ const Homepage = `<!doctype html>
 				const actionButton = document.createElement('button');
 				actionButton.className = 'counts-item-action';
 				if (actionName === 'Expire All' || actionName === 'Delete') {
-					actionButton.classList.add('counts-item-action-destructive');
+					actionButton.classList.add('button-destructive');
 				}
 				actionButton.textContent = actionName;
 				actionButton.addEventListener('click', () => actionFn(name));
@@ -641,10 +679,33 @@ const Homepage = `<!doctype html>
 			container.classList.add('overlay-container-hidden');
 		}
 
-		prefixFilterInput.value = queueNamePrefix();
-		prefixFilterInput.oninput = displayCurrent;
-		sortOrderSelect.onchange = displayCurrent;
-		reloadCounts(null);
+		function handleLoad() {
+			prefixFilterInput.value = queueNamePrefix();
+			prefixFilterInput.addEventListener('input', () => {
+				displayCurrent();
+				updateQueryButtons();
+			});
+			sortOrderSelect.value = queueSortOrder() || 'name';
+			sortOrderSelect.addEventListener('change', () => {
+				displayCurrent();
+				updateQueryButtons();
+			});
+			reloadCounts(null);
+
+			clearURLButton.addEventListener('click', () => window.location = '/');
+			addToURLButton.addEventListener('click', () => {
+				window.location = (
+					'/?prefix=' +
+					encodeURIComponent(prefixFilterInput.value) +
+					'&sort-order=' +
+					encodeURIComponent(sortOrderSelect.value)
+				);
+			});
+
+			updateQueryButtons();
+		}
+
+		handleLoad();
 		-->
 		</script>
 	</body>

@@ -532,13 +532,14 @@ func (s *Server) TimeoutParam(w http.ResponseWriter, r *http.Request) (*time.Dur
 }
 
 func (s *Server) SetupSaveLoop(timeout time.Duration) {
+	if s.SavePath == "" {
+		return
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGUSR1)
 	s.SignalChan = sigChan
 
-	if s.SavePath == "" {
-		return
-	}
 	if _, err := os.Stat(s.SavePath); err == nil {
 		log.Printf("Loading state from: %s", s.SavePath)
 		s.Queues, err = ReadQueueStateMux(timeout, s.SavePath)
