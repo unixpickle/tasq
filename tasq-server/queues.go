@@ -685,13 +685,26 @@ func (r *RunningQueue) Len() int {
 // NumExpired gets the number of expired tasks.
 func (r *RunningQueue) NumExpired() int {
 	now := time.Now()
-	task := r.deque.first
-	n := 0
-	for task != nil && !task.expiration.After(now) {
-		n++
-		task = task.queueNext
+
+	// Search in both directions to avoid a slow path when most running tasks
+	// are expired (and there's many) while there's a small number of running
+	// tasks (which are usually bounded by worker count).
+
+	firstTask := r.deque.first
+	lastTask := r.deque.last
+	numExpired := 0
+	numNonExpired := 0
+	for firstTask != nil && !firstTask.expiration.After(now) {
+		numExpired++
+		firstTask = firstTask.queueNext
+		if !lastTask.expiration.After(now) {
+			return r.deque.count - numNonExpired
+		} else {
+			numNonExpired++
+			lastTask = lastTask.queuePrev
+		}
 	}
-	return n
+	return numExpired
 }
 
 // ExpireAll changes the timeout for all tasks to be before now.
