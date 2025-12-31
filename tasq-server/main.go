@@ -23,6 +23,8 @@ import (
 	"github.com/unixpickle/essentials"
 )
 
+var ErrTooManyBytes = errors.New("queue contains too many bytes")
+
 func main() {
 	var addr string
 	var pathPrefix string
@@ -31,6 +33,7 @@ func main() {
 	var savePath string
 	var saveInterval time.Duration
 	var timeout time.Duration
+	var maxQueueBytes int64
 	flag.StringVar(&addr, "addr", ":8080", "address to listen on")
 	flag.StringVar(&pathPrefix, "path-prefix", "/", "prefix for URL paths")
 	flag.StringVar(&authUsername, "auth-username", "", "username for basic auth")
@@ -38,6 +41,7 @@ func main() {
 	flag.StringVar(&savePath, "save-path", "", "if specified, path to periodically save state to")
 	flag.DurationVar(&timeout, "timeout", time.Minute*15, "timeout of individual tasks")
 	flag.DurationVar(&saveInterval, "save-interval", time.Minute*5, "time between saves")
+	flag.Int64Var(&maxQueueBytes, "max-queue-bytes", 20000000000, "maximum size of a queue")
 	flag.Parse()
 
 	if !strings.HasSuffix(pathPrefix, "/") || !strings.HasPrefix(pathPrefix, "/") {
@@ -45,13 +49,14 @@ func main() {
 	}
 
 	s := &Server{
-		PathPrefix:   pathPrefix,
-		AuthUsername: authUsername,
-		AuthPassword: authPassword,
-		SavePath:     savePath,
-		SaveInterval: saveInterval,
-		StartTime:    time.Now(),
-		Queues:       NewQueueStateMux(timeout),
+		PathPrefix:    pathPrefix,
+		AuthUsername:  authUsername,
+		AuthPassword:  authPassword,
+		SavePath:      savePath,
+		SaveInterval:  saveInterval,
+		StartTime:     time.Now(),
+		Queues:        NewQueueStateMux(timeout),
+		MaxQueueBytes: maxQueueBytes,
 	}
 	http.HandleFunc(pathPrefix, s.ServeIndex)
 	http.HandleFunc(pathPrefix+"summary", s.ServeSummary)
@@ -73,12 +78,13 @@ func main() {
 }
 
 type Server struct {
-	PathPrefix   string
-	AuthUsername string
-	AuthPassword string
-	Queues       *QueueStateMux
-	SavePath     string
-	SaveInterval time.Duration
+	PathPrefix    string
+	AuthUsername  string
+	AuthPassword  string
+	Queues        *QueueStateMux
+	SavePath      string
+	SaveInterval  time.Duration
+	MaxQueueBytes int64
 
 	StartTime time.Time
 
@@ -221,11 +227,19 @@ func (s *Server) ServePushTask(w http.ResponseWriter, r *http.Request) {
 		serveError(w, "must specify non-empty `contents` parameter", http.StatusBadRequest)
 	} else {
 		var obj interface{}
+		var overBytes bool
 		err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			if qs.Bytes() > s.MaxQueueBytes {
+				overBytes = true
+				return
+			}
 			if id, ok := qs.Push(contents, limit); ok {
 				obj = id
 			}
 		})
+		if overBytes {
+			err = ErrTooManyBytes
+		}
 		if err != nil {
 			serveError(w, err.Error(), http.StatusServiceUnavailable)
 		} else {
@@ -252,9 +266,17 @@ func (s *Server) ServePushBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var ids []string
+		var overBytes bool
 		err = s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+			if qs.Bytes() > s.MaxQueueBytes {
+				overBytes = true
+				return
+			}
 			ids, _ = qs.PushBatch(contents, limit)
 		})
+		if overBytes {
+			err = ErrTooManyBytes
+		}
 		if err != nil {
 			serveError(w, err.Error(), http.StatusServiceUnavailable)
 		} else {

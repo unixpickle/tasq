@@ -411,7 +411,7 @@ func (q *QueueState) Counts(rateSeconds int, includeModtime, includeBytes bool) 
 	var bytes *int64
 	if includeBytes {
 		bytes = new(int64)
-		*bytes = q.pending.Bytes() + q.running.Bytes()
+		*bytes = q.Bytes()
 	}
 	return &QueueCounts{
 		Pending:      int64(q.pending.Len()),
@@ -422,6 +422,11 @@ func (q *QueueState) Counts(rateSeconds int, includeModtime, includeBytes bool) 
 		Rate:         rate,
 		Bytes:        bytes,
 	}
+}
+
+// Bytes gets the total used bytes in the queue.
+func (q *QueueState) Bytes() int64 {
+	return q.pending.Bytes() + q.running.Bytes()
 }
 
 // Clear empties the queues and resets the completion counter.
