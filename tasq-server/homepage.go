@@ -515,6 +515,7 @@ const Homepage = `<!doctype html>
 				['running', 'In progress'],
 				['expired', 'Expired'],
 				['completed', 'Completed'],
+				['failed', 'Failed'],
 				['rate', 'Tasks/sec'],
 				['modtime', 'Last modified'],
 				['bytes', 'Memory'],

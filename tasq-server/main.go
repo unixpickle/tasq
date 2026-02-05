@@ -70,6 +70,8 @@ func main() {
 	http.HandleFunc(pathPrefix+"task/completed", s.ServeCompletedTask)
 	http.HandleFunc(pathPrefix+"task/completed_batch", s.ServeCompletedBatch)
 	http.HandleFunc(pathPrefix+"task/keepalive", s.ServeKeepalive)
+	http.HandleFunc(pathPrefix+"task/expire", s.ServeExpireTask)
+	http.HandleFunc(pathPrefix+"task/failed", s.ServeFailedTask)
 	http.HandleFunc(pathPrefix+"task/clear", s.ServeClearTasks)
 	http.HandleFunc(pathPrefix+"task/expire_all", s.ServeExpireTasks)
 	http.HandleFunc(pathPrefix+"task/queue_expired", s.ServeQueueExpired)
@@ -128,6 +130,7 @@ func (s *Server) ServeSummary(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(buf, "In progress: %d\n", counts.Running)
 		fmt.Fprintf(buf, "    Expired: %d\n", counts.Expired)
 		fmt.Fprintf(buf, "  Completed: %d\n", counts.Completed)
+		fmt.Fprintf(buf, "     Failed: %d\n", counts.Failed)
 		fmt.Fprintf(buf, "      Bytes: %d\n", counts.Bytes)
 	})
 	if err != nil {
@@ -391,13 +394,21 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeCompletedTask(w http.ResponseWriter, r *http.Request) {
+	s.serveFailOrCompleted(w, r, true)
+}
+
+func (s *Server) ServeFailedTask(w http.ResponseWriter, r *http.Request) {
+	s.serveFailOrCompleted(w, r, false)
+}
+
+func (s *Server) serveFailOrCompleted(w http.ResponseWriter, r *http.Request, success bool) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
 	id := r.FormValue("id")
 	var status bool
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		status = qs.Completed(id)
+		status = qs.Completed(id, success)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
@@ -423,7 +434,7 @@ func (s *Server) ServeCompletedBatch(w http.ResponseWriter, r *http.Request) {
 		var failures []string
 		err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 			for _, id := range ids {
-				if !qs.Completed(id) {
+				if !qs.Completed(id, true) {
 					failures = append(failures, id)
 				}
 			}
@@ -454,6 +465,25 @@ func (s *Server) ServeKeepalive(w http.ResponseWriter, r *http.Request) {
 	var status bool
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		status = qs.Keepalive(id, timeout)
+	})
+	if err != nil {
+		serveError(w, err.Error(), http.StatusServiceUnavailable)
+	} else if status {
+		serveObject(w, true)
+	} else {
+		serveError(w, "there was no in-progress task with the specified `id`", http.StatusOK)
+	}
+}
+
+func (s *Server) ServeExpireTask(w http.ResponseWriter, r *http.Request) {
+	if !s.BasicAuth(w, r) {
+		return
+	}
+	id := r.FormValue("id")
+
+	var status bool
+	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
+		status = qs.Expire(id)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)

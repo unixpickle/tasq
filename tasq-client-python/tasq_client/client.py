@@ -6,12 +6,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Thread
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
 from .check_type import CheckTypeException, OptionalKey, OptionalValue, check_type
+
+ExceptionBehavior = Literal["fail", "expire", "ignore"]
 
 
 @dataclass
@@ -30,6 +32,9 @@ class QueueCounts:
     running: int
     expired: int
     completed: int
+
+    # This is a newer field, so legacy servers will not return it.
+    failed: int = 0
 
     # Won't be set if a time window wasn't specified in the request, or if the
     # server is old enough to not support rate estimation.
@@ -226,8 +231,18 @@ class TasqClient:
         """Reset the timeout interval for a still in-progress task."""
         self._post_form("/task/keepalive", dict(id=id), supports_timeout=True)
 
+    def expire(self, id: str):
+        """Mark the given task as expired."""
+        self._post_form("/task/expire", dict(id=id))
+
+    def failed(self, id: str):
+        """Mark the given task as failed."""
+        self._post_form("/task/failed", dict(id=id))
+
     @contextmanager
-    def pop_running_task(self) -> Generator[Optional["RunningTask"], None, None]:
+    def pop_running_task(
+        self, on_exception: ExceptionBehavior = "ignore"
+    ) -> Generator[Optional["RunningTask"], None, None]:
         """
         Pop a task from the queue and wrap it in a RunningTask, blocking until
         the queue is completely empty or a task is successfully popped.
@@ -238,6 +253,11 @@ class TasqClient:
         This is meant to be used in a `with` clause. When the `with` clause is
         exited, the keepalive loop is stopped, and the task will be marked as
         completed unless the with clause is exited with an exception.
+
+        In the case of an exception, the on_exception behavior determines what
+        is done with the task. Optionally, the task can be marked as expired or
+        failed; by default, the task will be left in the running state until
+        its timeout expires.
         """
         while True:
             task, timeout = self.pop()
@@ -245,9 +265,16 @@ class TasqClient:
                 rt = RunningTask(self, id=task.id, contents=task.contents)
                 try:
                     yield rt
+                except:
+                    if on_exception == "fail":
+                        rt.failed()
+                    elif on_exception == "expire":
+                        rt.expire()
+                    else:
+                        rt.cancel()
+                    raise
+                else:
                     rt.completed()
-                finally:
-                    rt.cancel()
                 return
             elif timeout is not None:
                 time.sleep(min(timeout, self.max_timeout))
@@ -264,6 +291,7 @@ class TasqClient:
                 "running": int,
                 "expired": int,
                 "completed": int,
+                OptionalKey("failed"): int,
                 OptionalKey("minute_rate"): float,
                 OptionalKey("modtime"): int,
                 OptionalKey("bytes"): int,
@@ -364,6 +392,7 @@ class RunningTask(Task):
             daemon=True,
         )
         self._thread.start()
+        self._sent_final_status = False
 
     def cancel(self):
         if self._thread is None:
@@ -373,8 +402,20 @@ class RunningTask(Task):
         self._thread = None
 
     def completed(self):
+        self._send_status(self.client.completed)
+
+    def failed(self):
+        self._send_status(self.client.failed)
+
+    def expire(self):
+        self._send_status(self.client.expire)
+
+    def _send_status(self, fn: Callable[[str], None]):
+        if self._sent_final_status:
+            return
         self.cancel()
-        self.client.completed(self.id)
+        fn(self.id)
+        self._sent_final_status = True
 
     @staticmethod
     def _keepalive_worker(

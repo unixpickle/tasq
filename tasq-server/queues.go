@@ -193,6 +193,11 @@ func (q *QueueStateMux) Serialize(w io.Writer, shutdown bool) error {
 	return nil
 }
 
+type CompletionCounter struct {
+	Succeeded int64
+	Failed    int64
+}
+
 // QueueState maintains two queues of tasks: a pending queue and a running
 // queue.
 //
@@ -209,7 +214,7 @@ type QueueState struct {
 	pending *PendingQueue
 	running *RunningQueue
 
-	completionCounter int64
+	completionCounter CompletionCounter
 	lastModified      time.Time
 	rateTracker       *RateTracker
 }
@@ -238,7 +243,7 @@ func DecodeQueueState(obj *EncodedQueueState) *QueueState {
 	return &QueueState{
 		pending:           DecodePendingQueue(obj.Pending),
 		running:           DecodeRunningQueue(obj.Running),
-		completionCounter: obj.Completed,
+		completionCounter: CompletionCounter{Succeeded: obj.Completed, Failed: obj.Failed},
 		lastModified:      lastMod,
 		rateTracker:       DecodeRateTracker(obj.RateTracker),
 	}
@@ -252,7 +257,8 @@ func (q *QueueState) Encode() *EncodedQueueState {
 	return &EncodedQueueState{
 		Pending:      q.pending.Encode(),
 		Running:      q.running.Encode(),
-		Completed:    q.completionCounter,
+		Completed:    q.completionCounter.Succeeded,
+		Failed:       q.completionCounter.Failed,
 		LastModified: &mt,
 		RateTracker:  q.rateTracker.Encode(),
 	}
@@ -367,12 +373,16 @@ func (q *QueueState) Peek() (*Task, *Task, *time.Time) {
 
 // Completed marks the identified task as complete, or returns false if no task
 // with the given ID was in the running queue.
-func (q *QueueState) Completed(id string) bool {
+func (q *QueueState) Completed(id string, success bool) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	res := q.running.Completed(id) != nil
 	if res {
-		q.completionCounter += 1
+		if success {
+			q.completionCounter.Succeeded += 1
+		} else {
+			q.completionCounter.Failed += 1
+		}
 		q.modified()
 		q.rateTracker.Add(1)
 	}
@@ -385,6 +395,18 @@ func (q *QueueState) Keepalive(id string, timeout *time.Duration) bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	success := q.running.Keepalive(id, timeout)
+	if success {
+		q.modified()
+	}
+	return success
+}
+
+// Expire marks the running task as expired, and returns true if the task
+// was indeed running and successfully marked as expired.
+func (q *QueueState) Expire(id string) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	success := q.running.Expire(id)
 	if success {
 		q.modified()
 	}
@@ -417,7 +439,8 @@ func (q *QueueState) Counts(rateSeconds int, includeModtime, includeBytes bool) 
 		Pending:      int64(q.pending.Len()),
 		Running:      int64(runningTotal - runningExpired),
 		Expired:      int64(runningExpired),
-		Completed:    q.completionCounter,
+		Completed:    q.completionCounter.Succeeded,
+		Failed:       q.completionCounter.Failed,
 		LastModified: modtime,
 		Rate:         rate,
 		Bytes:        bytes,
@@ -435,7 +458,7 @@ func (q *QueueState) Clear() {
 	defer q.lock.Unlock()
 	q.pending.Clear()
 	q.running.Clear()
-	q.completionCounter = 0
+	q.completionCounter = CompletionCounter{}
 	q.rateTracker.Reset()
 	q.modified()
 }
@@ -445,7 +468,8 @@ func (q *QueueState) Clear() {
 func (q *QueueState) Cleared() bool {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
-	return q.pending.Len() == 0 && q.running.Len() == 0 && q.completionCounter == 0
+	return q.pending.Len() == 0 && q.running.Len() == 0 &&
+		q.completionCounter == CompletionCounter{}
 }
 
 // ExpireAll marks all tasks as expired, allowing them to be immediately popped
@@ -682,6 +706,23 @@ func (r *RunningQueue) Keepalive(id string, timeout *time.Duration) bool {
 	return true
 }
 
+// Expire changes the timeout of the task to some time in the past.
+func (r *RunningQueue) Expire(id string) bool {
+	task, ok := r.idToTask[id]
+	if !ok {
+		return false
+	}
+
+	r.deque.Remove(task)
+	task.expiration = time.Time{}
+
+	// No task should expire _before_ this one, so pushing to the first
+	// position should be safe.
+	r.deque.PushFirst(task)
+
+	return true
+}
+
 // Len gets the number of tasks in the queue.
 func (r *RunningQueue) Len() int {
 	return r.deque.Len()
@@ -733,6 +774,7 @@ type QueueCounts struct {
 	Running      int64    `json:"running"`
 	Expired      int64    `json:"expired"`
 	Completed    int64    `json:"completed"`
+	Failed       int64    `json:"failed"`
 	LastModified *int64   `json:"modtime,omitempty"`
 	Rate         *float64 `json:"rate,omitempty"`
 	Bytes        *int64   `json:"bytes,omitempty"`
@@ -754,6 +796,7 @@ type EncodedQueueState struct {
 	Pending      *EncodedPendingQueue
 	Running      *EncodedRunningQueue
 	Completed    int64
+	Failed       int64
 	LastModified *time.Time
 	RateTracker  *EncodedRateTracker
 }
@@ -764,6 +807,7 @@ func (e *EncodedQueueState) WriteJSON(w io.Writer) error {
 		"Pending":      e.Pending,
 		"Running":      e.Running,
 		"Completed":    e.Completed,
+		"Failed":       e.Failed,
 		"LastModified": &t,
 		"RateTracker":  e.RateTracker,
 	})
