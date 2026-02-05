@@ -450,7 +450,7 @@ const Homepage = `<!doctype html>
 				if (actionFn) {
 					await actionFn();
 				}
-				result = await (await fetch('/counts?all=1&window=60&includeModtime=1&includeBytes=1')).json();
+				result = await (await fetch('/counts?all=1&window=60&includeModtime=1&includeBytes=1&includeFailed=1')).json();
 			} catch (e) {
 			    currentError = e;
 				displayCurrent();
