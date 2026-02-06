@@ -80,12 +80,18 @@ class TasqClient:
         max_timeout: float = 30.0,
         task_timeout: Optional[float] = None,
         retry_server_errors: bool = True,
+        auth: tuple[str, str] | Callable | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.keepalive_interval = keepalive_interval
         self.context = context
         self.username = username
         self.password = password
+        self.auth = (
+            (username, password)
+            if auth is None and username is not None and password is not None
+            else auth
+        )
         self.max_timeout = max_timeout
         self.task_timeout = task_timeout
         self.retry_server_errors = retry_server_errors
@@ -323,9 +329,7 @@ class TasqClient:
         self._configure_session()
 
     def _configure_session(self):
-        if self.username is not None or self.password is not None:
-            assert self.username is not None and self.password is not None
-            self.session.auth = (self.username, self.password)
+        self.session.auth = self.auth
         if self.retry_server_errors:
             retries = Retry(
                 total=10,
