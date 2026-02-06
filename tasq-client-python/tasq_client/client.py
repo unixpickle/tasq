@@ -268,11 +268,7 @@ class TasqClient:
                 try:
                     yield rt
                 except BaseException as exc:
-                    try:
-                        behavior = on_exception(exc) if callable(on_exception) else on_exception
-                    except BaseException:
-                        rt.cancel()
-                        raise
+                    behavior = on_exception(exc) if callable(on_exception) else on_exception
                     if behavior == "fail":
                         rt.failed()
                     elif behavior == "expire":
