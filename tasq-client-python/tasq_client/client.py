@@ -68,6 +68,8 @@ class TasqClient:
                          has a longer timeout period.
     :param retry_server_errors: if True, retry requests if the server returns
                                 certain 5xx status codes.
+    :param auth: a custom requests session auth object, if using auth other
+                 than HTTP basic authentication.
     """
 
     def __init__(
