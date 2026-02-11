@@ -23,7 +23,7 @@ class Task:
 
     id: str
     contents: str
-    num_previous_attempts: Optional[int] = None
+    attempts: Optional[int] = None
 
 
 @dataclass
@@ -174,11 +174,11 @@ class TasqClient:
         retry time is also None, then the queue has been exhausted.
         """
         result = self._get(
-            "/task/pop?includePreviousAttempts=1",
+            "/task/pop?includeAttempts=1",
             type_template={
                 OptionalKey("id"): str,
                 OptionalKey("contents"): str,
-                OptionalKey("numPreviousAttempts"): int,
+                OptionalKey("attempts"): int,
                 OptionalKey("retry"): float,
                 OptionalKey("done"): bool,
             },
@@ -188,7 +188,7 @@ class TasqClient:
             return Task(
                 id=result["id"],
                 contents=result["contents"],
-                num_previous_attempts=result.get("numPreviousAttempts"),
+                attempts=result.get("attempts"),
             ), None
         elif "done" not in result:
             raise TasqMisbehavingServerError("no done field in response")
@@ -210,11 +210,11 @@ class TasqClient:
         been exhausted.
         """
         response = self._post_form(
-            "/task/pop_batch?includePreviousAttempts=1",
+            "/task/pop_batch?includeAttempts=1",
             dict(count=n),
             type_template={
                 "done": bool,
-                "tasks": [{"id": str, "contents": str, OptionalKey("numPreviousAttempts"): int}],
+                "tasks": [{"id": str, "contents": str, OptionalKey("attempts"): int}],
                 OptionalKey("retry"): float,
             },
             supports_timeout=True,
@@ -230,7 +230,7 @@ class TasqClient:
                 Task(
                     id=x["id"],
                     contents=x["contents"],
-                    num_previous_attempts=x.get("numPreviousAttempts"),
+                    attempts=x.get("attempts"),
                 )
                 for x in response["tasks"]
             ], retry
@@ -290,7 +290,7 @@ class TasqClient:
                     self,
                     id=task.id,
                     contents=task.contents,
-                    num_previous_attempts=task.num_previous_attempts,
+                    attempts=task.attempts,
                 )
                 try:
                     yield rt

@@ -16,13 +16,13 @@ type Task struct {
 }
 
 func (t *Task) DisconnectedCopy() *Task {
-	return &Task{ID: t.ID, Contents: t.Contents}
+	return &Task{ID: t.ID, Contents: t.Contents, numAttempts: t.numAttempts}
 }
 
 type TaskResponse struct {
-	ID                  string `json:"id"`
-	Contents            string `json:"contents"`
-	NumPreviousAttempts *int64 `json:"numPreviousAttempts,omitempty"`
+	ID       string `json:"id"`
+	Contents string `json:"contents"`
+	Attempts *int64 `json:"attempts,omitempty"`
 }
 
 type TaskDeque struct {
