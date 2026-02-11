@@ -12,7 +12,9 @@ Here are endpoints for pushing and popping tasks:
  * `/task/push_batch` - POST to this endpoint with a JSON array of tasks. For example, `["hi", "test"]`.
  * `/task/pop` - pop a task from the queue. If no tasks are available, this may indicate a timeout after which the longest-running task would timeout.
    * On normal response, will return something like `{"data": {"id": "...", "contents": "..."}}`.
+   * Pass `?includePreviousAttempts=1` to also include `numPreviousAttempts`, i.e. the number of previous dequeues for this task before the current pop (`0` for the first dequeue).
    * If queue is empty, will return something like `{"data": {"done": false, "retry": 3.14}}`, where `retry` is the number of seconds after which to try popping again, and `done` is `true` if no tasks are pending or running.
+ * `/task/pop_batch` - POST to this endpoint with a form field `count=N` to get up to `N` tasks. Pass `?includePreviousAttempts=1` to include per-task `numPreviousAttempts`.
  * `/task/completed` - indicate that the task is completed. Simply provide a `?id=X` query argument.
 
 Additionally, these are some endpoints that may be helpful for maintaining a running queue in practice:

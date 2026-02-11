@@ -293,15 +293,18 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	includePreviousAttempts := r.URL.Query().Get("includePreviousAttempts") == "1"
 	timeout, timeoutOk := s.TimeoutParam(w, r)
 	if !timeoutOk {
 		return
 	}
 
-	var task *Task
+	var task *TaskResponse
 	var nextTry *time.Time
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		task, nextTry = qs.Pop(timeout)
+		var popped *Task
+		popped, nextTry = qs.Pop(timeout)
+		task = taskToResponse(popped, includePreviousAttempts)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
@@ -324,6 +327,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	includePreviousAttempts := r.URL.Query().Get("includePreviousAttempts") == "1"
 	timeout, timeoutOk := s.TimeoutParam(w, r)
 	if !timeoutOk {
 		return
@@ -355,11 +359,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 		timeout := time.Until(*nextTry)
 		result["retry"] = math.Max(0, timeout.Seconds())
 	}
-	if tasks == nil {
-		// Prevent a null value in the JSON field.
-		tasks = []*Task{}
-	}
-	result["tasks"] = tasks
+	result["tasks"] = tasksToResponses(tasks, includePreviousAttempts)
 
 	serveObject(w, result)
 }
@@ -641,6 +641,33 @@ func (s *Server) SaveLoop() {
 	// We are shutting down post-save
 	log.Println("exiting due to shutdown signal")
 	os.Exit(0)
+}
+
+func taskToResponse(task *Task, includePreviousAttempts bool) *TaskResponse {
+	if task == nil {
+		return nil
+	}
+	var numPreviousAttempts *int64
+	if includePreviousAttempts {
+		if task.numAttempts < 1 {
+			panic("unexpected task.numAttempts<1 while includePreviousAttempts=1 in task response")
+		}
+		numAttempts := task.numAttempts - 1
+		numPreviousAttempts = &numAttempts
+	}
+	return &TaskResponse{
+		ID:                  task.ID,
+		Contents:            task.Contents,
+		NumPreviousAttempts: numPreviousAttempts,
+	}
+}
+
+func tasksToResponses(tasks []*Task, includePreviousAttempts bool) []*TaskResponse {
+	responseTasks := make([]*TaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		responseTasks = append(responseTasks, taskToResponse(task, includePreviousAttempts))
+	}
+	return responseTasks
 }
 
 func parseLimit(limit string) (int, error) {

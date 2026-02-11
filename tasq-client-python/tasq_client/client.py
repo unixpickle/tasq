@@ -23,6 +23,7 @@ class Task:
 
     id: str
     contents: str
+    num_previous_attempts: Optional[int] = None
 
 
 @dataclass
@@ -173,17 +174,22 @@ class TasqClient:
         retry time is also None, then the queue has been exhausted.
         """
         result = self._get(
-            "/task/pop",
+            "/task/pop?includePreviousAttempts=1",
             type_template={
                 OptionalKey("id"): str,
                 OptionalKey("contents"): str,
+                OptionalKey("numPreviousAttempts"): int,
                 OptionalKey("retry"): float,
                 OptionalKey("done"): bool,
             },
             supports_timeout=True,
         )
         if "id" in result and "contents" in result:
-            return Task(id=result["id"], contents=result["contents"]), None
+            return Task(
+                id=result["id"],
+                contents=result["contents"],
+                num_previous_attempts=result.get("numPreviousAttempts"),
+            ), None
         elif "done" not in result:
             raise TasqMisbehavingServerError("no done field in response")
         elif result["done"]:
@@ -204,11 +210,11 @@ class TasqClient:
         been exhausted.
         """
         response = self._post_form(
-            "/task/pop_batch",
+            "/task/pop_batch?includePreviousAttempts=1",
             dict(count=n),
             type_template={
                 "done": bool,
-                "tasks": [dict(id=str, contents=str)],
+                "tasks": [{"id": str, "contents": str, OptionalKey("numPreviousAttempts"): int}],
                 OptionalKey("retry"): float,
             },
             supports_timeout=True,
@@ -220,7 +226,14 @@ class TasqClient:
         retry = float(response["retry"]) if "retry" in response else None
 
         if len(response["tasks"]):
-            return [Task(id=x["id"], contents=x["contents"]) for x in response["tasks"]], retry
+            return [
+                Task(
+                    id=x["id"],
+                    contents=x["contents"],
+                    num_previous_attempts=x.get("numPreviousAttempts"),
+                )
+                for x in response["tasks"]
+            ], retry
         elif retry is not None:
             return [], retry
         else:
@@ -250,7 +263,8 @@ class TasqClient:
 
     @contextmanager
     def pop_running_task(
-        self, on_exception: OnExceptionBehavior = "ignore"
+        self,
+        on_exception: OnExceptionBehavior = "ignore",
     ) -> Generator[Optional["RunningTask"], None, None]:
         """
         Pop a task from the queue and wrap it in a RunningTask, blocking until
@@ -272,7 +286,12 @@ class TasqClient:
         while True:
             task, timeout = self.pop()
             if task is not None:
-                rt = RunningTask(self, id=task.id, contents=task.contents)
+                rt = RunningTask(
+                    self,
+                    id=task.id,
+                    contents=task.contents,
+                    num_previous_attempts=task.num_previous_attempts,
+                )
                 try:
                     yield rt
                 except BaseException as exc:
