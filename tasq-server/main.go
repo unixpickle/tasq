@@ -293,15 +293,18 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	includeAttempts := r.URL.Query().Get("includeAttempts") == "1"
 	timeout, timeoutOk := s.TimeoutParam(w, r)
 	if !timeoutOk {
 		return
 	}
 
-	var task *Task
+	var task *TaskResponse
 	var nextTry *time.Time
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
-		task, nextTry = qs.Pop(timeout)
+		var popped *Task
+		popped, nextTry = qs.Pop(timeout)
+		task = taskToPoppedResponse(popped, includeAttempts)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
@@ -324,6 +327,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	includeAttempts := r.URL.Query().Get("includeAttempts") == "1"
 	timeout, timeoutOk := s.TimeoutParam(w, r)
 	if !timeoutOk {
 		return
@@ -355,11 +359,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 		timeout := time.Until(*nextTry)
 		result["retry"] = math.Max(0, timeout.Seconds())
 	}
-	if tasks == nil {
-		// Prevent a null value in the JSON field.
-		tasks = []*Task{}
-	}
-	result["tasks"] = tasks
+	result["tasks"] = tasksToPoppedResponses(tasks, includeAttempts)
 
 	serveObject(w, result)
 }
@@ -368,6 +368,7 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 	if !s.BasicAuth(w, r) {
 		return
 	}
+	includeAttempts := r.URL.Query().Get("includeAttempts") == "1"
 	var task, nextTask *Task
 	var nextTime *time.Time
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
@@ -376,17 +377,14 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
 	} else if task != nil {
-		serveObject(w, map[string]interface{}{"contents": task.Contents, "id": task.ID})
+		serveObject(w, taskToPeekResponse(task, includeAttempts))
 	} else {
 		if nextTask != nil {
 			timeout := time.Until(*nextTime)
 			serveObject(w, map[string]interface{}{
 				"done":  false,
 				"retry": math.Max(0, timeout.Seconds()),
-				"next": map[string]interface{}{
-					"contents": nextTask.Contents,
-					"id":       nextTask.ID,
-				},
+				"next":  taskToPeekResponse(nextTask, includeAttempts),
 			})
 		} else {
 			serveObject(w, map[string]interface{}{"done": true})
@@ -641,6 +639,49 @@ func (s *Server) SaveLoop() {
 	// We are shutting down post-save
 	log.Println("exiting due to shutdown signal")
 	os.Exit(0)
+}
+
+func taskToPoppedResponse(task *Task, includeAttempts bool) *TaskResponse {
+	if task == nil {
+		return nil
+	}
+	var attempts *int64
+	if includeAttempts {
+		if task.numAttempts < 1 {
+			panic("unexpected task.numAttempts<1 while includeAttempts=1 in pop response")
+		}
+		n := task.numAttempts - 1
+		attempts = &n
+	}
+	return &TaskResponse{
+		ID:       task.ID,
+		Contents: task.Contents,
+		Attempts: attempts,
+	}
+}
+
+func tasksToPoppedResponses(tasks []*Task, includeAttempts bool) []*TaskResponse {
+	responseTasks := make([]*TaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		responseTasks = append(responseTasks, taskToPoppedResponse(task, includeAttempts))
+	}
+	return responseTasks
+}
+
+func taskToPeekResponse(task *Task, includeAttempts bool) *TaskResponse {
+	if task == nil {
+		return nil
+	}
+	var attempts *int64
+	if includeAttempts {
+		n := task.numAttempts
+		attempts = &n
+	}
+	return &TaskResponse{
+		ID:       task.ID,
+		Contents: task.Contents,
+		Attempts: attempts,
+	}
 }
 
 func parseLimit(limit string) (int, error) {
