@@ -306,7 +306,7 @@ func (q *QueueState) Pop(timeout *time.Duration) (*Task, *time.Time) {
 	nextPending := q.pending.PopTask()
 	if nextPending != nil {
 		q.modified()
-		nextPending.numAttempts += 1
+		nextPending.attempts += 1
 		q.running.StartedTask(nextPending, timeout)
 		return nextPending, nil
 	}
@@ -314,7 +314,7 @@ func (q *QueueState) Pop(timeout *time.Duration) (*Task, *time.Time) {
 	nextExpired, nextTry := q.running.PopExpired()
 	if nextExpired != nil {
 		q.modified()
-		nextExpired.numAttempts += 1
+		nextExpired.attempts += 1
 		q.running.StartedTask(nextExpired, timeout)
 		return nextExpired, nil
 	}
@@ -337,7 +337,7 @@ func (q *QueueState) PopBatch(n int, timeout *time.Duration) ([]*Task, *time.Tim
 		if t == nil {
 			break
 		}
-		t.numAttempts += 1
+		t.attempts += 1
 		tasks = append(tasks, t)
 	}
 	var nextTry *time.Time
@@ -347,7 +347,7 @@ func (q *QueueState) PopBatch(n int, timeout *time.Duration) ([]*Task, *time.Tim
 		if t == nil {
 			break
 		}
-		t.numAttempts += 1
+		t.attempts += 1
 		tasks = append(tasks, t)
 	}
 

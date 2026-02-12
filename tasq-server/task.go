@@ -6,7 +6,7 @@ type Task struct {
 	ID       string `json:"id"`
 	Contents string `json:"contents"`
 
-	numAttempts int64
+	attempts int64
 
 	// For in-progress tasks.
 	expiration time.Time
@@ -16,13 +16,7 @@ type Task struct {
 }
 
 func (t *Task) DisconnectedCopy() *Task {
-	return &Task{ID: t.ID, Contents: t.Contents, numAttempts: t.numAttempts}
-}
-
-type TaskResponse struct {
-	ID       string `json:"id"`
-	Contents string `json:"contents"`
-	Attempts *int64 `json:"attempts,omitempty"`
+	return &Task{ID: t.ID, Contents: t.Contents, attempts: t.attempts}
 }
 
 type TaskDeque struct {
@@ -38,10 +32,10 @@ func DecodeTaskDeque(obj []EncodedTask) *TaskDeque {
 	res := &TaskDeque{count: len(obj)}
 	for i, et := range obj {
 		task := &Task{
-			ID:          et.ID,
-			Contents:    et.Contents,
-			numAttempts: et.Attempts,
-			expiration:  et.Expiration,
+			ID:         et.ID,
+			Contents:   et.Contents,
+			attempts:   et.Attempts,
+			expiration: et.Expiration,
 		}
 		if i == 0 {
 			res.first = task
@@ -64,7 +58,7 @@ func (t *TaskDeque) Encode() []EncodedTask {
 		objs = append(objs, EncodedTask{
 			ID:         obj.ID,
 			Contents:   obj.Contents,
-			Attempts:   obj.numAttempts,
+			Attempts:   obj.attempts,
 			Expiration: obj.expiration,
 		})
 	})

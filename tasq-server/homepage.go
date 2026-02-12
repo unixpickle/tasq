@@ -628,7 +628,7 @@ const Homepage = `<!doctype html>
 
 		async function peekTask(name) {
 			try {
-				const response = await fetch('/task/peek?context=' + encodeURIComponent(name));
+				const response = await fetch('/task/peek?includeAttempts=1&context=' + encodeURIComponent(name));
 				showTextOverlay(JSON.stringify(await response.json(), null, 2));
 			} catch (e) {
 				alert(e);

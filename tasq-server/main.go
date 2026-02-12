@@ -304,7 +304,7 @@ func (s *Server) ServePopTask(w http.ResponseWriter, r *http.Request) {
 	err := s.Queues.Get(r.URL.Query().Get("context"), func(qs *QueueState) {
 		var popped *Task
 		popped, nextTry = qs.Pop(timeout)
-		task = taskToPoppedResponse(popped, includeAttempts)
+		task = NewTaskResponse(popped, includeAttempts, true)
 	})
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
@@ -359,7 +359,7 @@ func (s *Server) ServePopBatch(w http.ResponseWriter, r *http.Request) {
 		timeout := time.Until(*nextTry)
 		result["retry"] = math.Max(0, timeout.Seconds())
 	}
-	result["tasks"] = tasksToPoppedResponses(tasks, includeAttempts)
+	result["tasks"] = NewTaskResponses(tasks, includeAttempts, true)
 
 	serveObject(w, result)
 }
@@ -377,14 +377,14 @@ func (s *Server) ServePeekTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		serveError(w, err.Error(), http.StatusServiceUnavailable)
 	} else if task != nil {
-		serveObject(w, taskToPeekResponse(task, includeAttempts))
+		serveObject(w, NewTaskResponse(task, includeAttempts, false))
 	} else {
 		if nextTask != nil {
 			timeout := time.Until(*nextTime)
 			serveObject(w, map[string]interface{}{
 				"done":  false,
 				"retry": math.Max(0, timeout.Seconds()),
-				"next":  taskToPeekResponse(nextTask, includeAttempts),
+				"next":  NewTaskResponse(nextTask, includeAttempts, false),
 			})
 		} else {
 			serveObject(w, map[string]interface{}{"done": true})
@@ -641,16 +641,22 @@ func (s *Server) SaveLoop() {
 	os.Exit(0)
 }
 
-func taskToPoppedResponse(task *Task, includeAttempts bool) *TaskResponse {
+type TaskResponse struct {
+	ID       string `json:"id"`
+	Contents string `json:"contents"`
+	Attempts *int64 `json:"attempts,omitempty"`
+}
+
+func NewTaskResponse(task *Task, includeAttempts, pop bool) *TaskResponse {
 	if task == nil {
 		return nil
 	}
 	var attempts *int64
 	if includeAttempts {
-		if task.numAttempts < 1 {
-			panic("unexpected task.numAttempts<1 while includeAttempts=1 in pop response")
+		n := task.attempts
+		if pop {
+			n -= 1
 		}
-		n := task.numAttempts - 1
 		attempts = &n
 	}
 	return &TaskResponse{
@@ -660,28 +666,12 @@ func taskToPoppedResponse(task *Task, includeAttempts bool) *TaskResponse {
 	}
 }
 
-func tasksToPoppedResponses(tasks []*Task, includeAttempts bool) []*TaskResponse {
+func NewTaskResponses(tasks []*Task, includeAttempts, pop bool) []*TaskResponse {
 	responseTasks := make([]*TaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		responseTasks = append(responseTasks, taskToPoppedResponse(task, includeAttempts))
+		responseTasks = append(responseTasks, NewTaskResponse(task, includeAttempts, pop))
 	}
 	return responseTasks
-}
-
-func taskToPeekResponse(task *Task, includeAttempts bool) *TaskResponse {
-	if task == nil {
-		return nil
-	}
-	var attempts *int64
-	if includeAttempts {
-		n := task.numAttempts
-		attempts = &n
-	}
-	return &TaskResponse{
-		ID:       task.ID,
-		Contents: task.Contents,
-		Attempts: attempts,
-	}
 }
 
 func parseLimit(limit string) (int, error) {
