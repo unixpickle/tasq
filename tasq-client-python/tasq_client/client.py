@@ -17,6 +17,26 @@ ExceptionBehavior = Literal["fail", "expire", "ignore"]
 OnExceptionBehavior = Union[ExceptionBehavior, Callable[[BaseException], ExceptionBehavior]]
 
 
+class SessionPool:
+    """A thread-safe pool of requests sessions."""
+
+    def __init__(self):
+        self._sessions = Queue()
+
+    @contextmanager
+    def get(
+        self, constructor: Callable[[], requests.Session]
+    ) -> Generator[requests.Session, None, None]:
+        try:
+            session = self._sessions.get(block=False)
+        except Empty:
+            session = constructor()
+        try:
+            yield session
+        finally:
+            self._sessions.put(session)
+
+
 @dataclass
 class Task:
     """A task returned by the remote server."""
@@ -98,8 +118,7 @@ class TasqClient:
         self.max_timeout = max_timeout
         self.task_timeout = task_timeout
         self.retry_server_errors = retry_server_errors
-        self.session = requests.Session()
-        self._configure_session()
+        self.sessions = SessionPool()
 
     def push(self, contents: str, limit: int = 0) -> Optional[str]:
         """
@@ -341,16 +360,16 @@ class TasqClient:
         self,
     ):
         res = self.__dict__.copy()
-        del res["session"]
+        del res["sessions"]
         return res
 
     def __setstate__(self, state: Dict[str, Any]):
         self.__dict__ = state
-        self.session = requests.Session()
-        self._configure_session()
+        self.sessions = SessionPool()
 
-    def _configure_session(self):
-        self.session.auth = self.auth
+    def _create_session(self) -> requests.Session:
+        session = requests.Session()
+        session.auth = self.auth
         if self.retry_server_errors:
             retries = Retry(
                 total=10,
@@ -359,14 +378,14 @@ class TasqClient:
                 allowed_methods=False,
             )
             for schema in ("http://", "https://"):
-                self.session.mount(schema, HTTPAdapter(max_retries=retries))
+                session.mount(schema, HTTPAdapter(max_retries=retries))
+        return session
 
     def _get(
         self, path: str, type_template: Optional[Any] = None, supports_timeout: bool = False
     ) -> Any:
-        return _process_response(
-            self.session.get(self._url_for_path(path, supports_timeout)), type_template
-        )
+        with self.sessions.get(self._create_session) as session:
+            return _process_response(session.get(self._url_for_path(path, supports_timeout)), type_template)
 
     def _post_form(
         self,
@@ -375,9 +394,10 @@ class TasqClient:
         type_template: Optional[Any] = None,
         supports_timeout: bool = False,
     ) -> Any:
-        return _process_response(
-            self.session.post(self._url_for_path(path, supports_timeout), data=args), type_template
-        )
+        with self.sessions.get(self._create_session) as session:
+            return _process_response(
+                session.post(self._url_for_path(path, supports_timeout), data=args), type_template
+            )
 
     def _post_json(
         self,
@@ -386,9 +406,10 @@ class TasqClient:
         type_template: Optional[Any] = None,
         supports_timeout: bool = False,
     ) -> Any:
-        return _process_response(
-            self.session.post(self._url_for_path(path, supports_timeout), json=data), type_template
-        )
+        with self.sessions.get(self._create_session) as session:
+            return _process_response(
+                session.post(self._url_for_path(path, supports_timeout), json=data), type_template
+            )
 
     def _url_for_path(self, path: str, supports_timeout: bool) -> str:
         separator = "?" if "?" not in path else "&"
