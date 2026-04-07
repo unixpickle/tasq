@@ -253,6 +253,28 @@ const Homepage = `<!doctype html>
 				border: 1px solid #d5d5d5;
 				box-sizing: border-box;
 			}
+
+			.overlay-pane-modal {
+				box-sizing: border-box;
+				height: auto;
+				padding: 20px;
+			}
+
+			.overlay-title {
+				display: block;
+				font-size: 1.2em;
+				font-weight: bold;
+				margin-bottom: 10px;
+			}
+
+			.overlay-copy {
+				display: block;
+				margin-bottom: 20px;
+			}
+
+			.overlay-button-row > button {
+				margin: 0 5px;
+			}
 		</style>
 	</head>
 	<body>
@@ -329,6 +351,16 @@ const Homepage = `<!doctype html>
 				<button class="overlay-close-button" onclick="closeTextOverlay()">Close</button>
 			</div>
 		</div>
+		<div id="confirm-overlay-container" class="overlay-container overlay-container-hidden" onclick="closeConfirmOverlay()">
+			<div class="overlay-pane overlay-pane-modal" onclick="event.stopPropagation()">
+				<div id="confirm-overlay-title" class="overlay-title"></div>
+				<div id="confirm-overlay-copy" class="overlay-copy"></div>
+				<div class="overlay-button-row">
+					<button onclick="closeConfirmOverlay()">Cancel</button>
+					<button id="confirm-overlay-confirm-button" class="button-destructive" onclick="confirmOverlayAction()">Confirm</button>
+				</div>
+			</div>
+		</div>
 
 		<script type="text/javascript">
 		<!--
@@ -346,6 +378,7 @@ const Homepage = `<!doctype html>
 
 		let currentCounts = null;
 		let currentError = null;
+		let pendingConfirmAction = null;
 
 		function queueNamePrefix() {
 			const urlParams = new URLSearchParams(window.location.search);
@@ -617,9 +650,13 @@ const Homepage = `<!doctype html>
 		}
 
 		function deleteContext(name) {
-			if (confirm('Really delete queue with name: "' + name + '"?')) {
-				reloadCounts(() => fetch('/task/clear?context=' + encodeURIComponent(name)));				
-			}
+			const displayName = name ? '"' + name + '"' : 'the default context';
+			showConfirmOverlay(
+				'Delete queue',
+				'Really delete queue with name: ' + displayName + '?',
+				'Delete',
+				() => reloadCounts(() => fetch('/task/clear?context=' + encodeURIComponent(name))),
+			);
 		}
 
 		function expireAll(name) {
@@ -680,6 +717,27 @@ const Homepage = `<!doctype html>
 			container.classList.add('overlay-container-hidden');
 		}
 
+		function showConfirmOverlay(title, copy, confirmLabel, confirmAction) {
+			pendingConfirmAction = confirmAction;
+			document.getElementById('confirm-overlay-title').textContent = title;
+			document.getElementById('confirm-overlay-copy').textContent = copy;
+			document.getElementById('confirm-overlay-confirm-button').textContent = confirmLabel;
+			document.getElementById('confirm-overlay-container').classList.remove('overlay-container-hidden');
+		}
+
+		function closeConfirmOverlay() {
+			pendingConfirmAction = null;
+			document.getElementById('confirm-overlay-container').classList.add('overlay-container-hidden');
+		}
+
+		function confirmOverlayAction() {
+			const action = pendingConfirmAction;
+			closeConfirmOverlay();
+			if (action) {
+				action();
+			}
+		}
+
 		function handleLoad() {
 			prefixFilterInput.value = queueNamePrefix();
 			prefixFilterInput.addEventListener('input', () => {
@@ -701,6 +759,12 @@ const Homepage = `<!doctype html>
 					'&sort-order=' +
 					encodeURIComponent(sortOrderSelect.value)
 				);
+			});
+			window.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape') {
+					closeConfirmOverlay();
+					closeTextOverlay();
+				}
 			});
 
 			updateQueryButtons();
